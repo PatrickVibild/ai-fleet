@@ -21,5 +21,5 @@ RowLayout {
   Label { Layout.preferredWidth: Style.space(70); text: "CONTEXT" }
   Label { Layout.preferredWidth: Style.space(60); text: "TOKENS" }
   Label { Layout.preferredWidth: Style.space(56); text: "TIME" }
-  Item { Layout.preferredWidth: Style.space(96) }
+  Label { Layout.preferredWidth: Style.space(96); text: "TESTS" }
 }
