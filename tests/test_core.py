@@ -259,6 +259,26 @@ class Stalls(unittest.TestCase):
         self.assertEqual(out["tree"]["state"], "done")
         self.assertEqual(out["git"], {"merged": True, "pushed": False, "push": None})
 
+    def test_closing_a_finished_run_takes_it_off_the_panel(self):
+        import asyncio
+        from fleet import claude
+        self.fleet.questions, self.fleet.sudo, self.fleet.summaries, self.fleet.windows = {}, {}, {}, {}
+        self.fleet.gitinfo, self.fleet.pushes, self.fleet.listening = {}, {}, set()
+        with self.assertRaisesRegex(ValueError, "abort it first"):
+            asyncio.run(self.fleet.ctl({"action": "close", "run": self.run.id}))
+        self.run.d["status"], self.run.d["orchestrator"] = "done", "o1"
+        self.fleet.agents["o1"] = {"sessionId": "o1", "pid": 9, "id": "o1"}
+        stopped = []
+
+        async def stop(short):
+            stopped.append(short)
+        self.addCleanup(setattr, claude, "stop", claude.stop)
+        claude.stop = stop
+        asyncio.run(self.fleet.ctl({"action": "close", "run": self.run.id}))
+        self.assertEqual(stopped, ["o1"])
+        self.assertNotIn(self.run.id, [r["id"] for r in self.fleet.snapshot()["runs"]])
+        self.assertNotIn("/tmp/x", self.fleet.git_targets())
+
 
 class WakeOrchestrator(Stalls):
     """An orchestrator that stopped following its run is resumed when an event it should see arrives."""

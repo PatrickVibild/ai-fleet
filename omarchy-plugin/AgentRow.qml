@@ -284,7 +284,7 @@ Item {
           onClicked: r.view.openRow(r.row)
         }
         PanelActionButton {
-          visible: U.canOpen(r.row) && ["run", "attn", "wait"].indexOf(r.row.state) >= 0
+          visible: U.canOpen(r.row) && (r.row.alive || ["run", "attn", "wait"].indexOf(r.row.state) >= 0)
           iconText: "󰅖"; tooltipText: "Kill (x)"; foreground: r.view.dim; hoverColor: r.fleet.red
           onClicked: r.view.confirmKill = r.row.key
         }

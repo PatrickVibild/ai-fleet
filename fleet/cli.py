@@ -210,6 +210,7 @@ def main():
     s.add_argument("--quote", action="append", help="label::text, e.g. 'Ticket #15::Round each line'")
     for name in ("pause", "resume", "abort"):
         sub.add_parser(name).add_argument("run")
+    sub.add_parser("close", help="take a finished or aborted run off the panel").add_argument("run")
     for name in ("kill", "retry"):
         s = sub.add_parser(name)
         s.add_argument("run")
@@ -256,7 +257,7 @@ def main():
         call({"op": "escalate", "qid": a.qid, "why": a.why})
     elif a.cmd == "verdict":
         cmd_verdict(a)
-    elif a.cmd in ("pause", "resume", "abort", "kill", "retry", "sendback", "open", "stop"):
+    elif a.cmd in ("pause", "resume", "abort", "close", "kill", "retry", "sendback", "open", "stop"):
         cmd_ctl(a)
     elif a.cmd == "continue":
         cmd_continue(a)
