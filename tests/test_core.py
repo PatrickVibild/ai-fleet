@@ -156,6 +156,36 @@ class TestCounts(unittest.TestCase):
         self.check("test result: ok. 5 passed; 0 failed; 1 ignored\ntest result: FAILED. 3 passed; 1 failed; 0 ignored\n", 8, 1, 1, 10)
         self.check("=== RUN TestA\n--- PASS: TestA (0.00s)\n--- FAIL: TestB (0.01s)\n", 1, 1, 0, 2)
 
+    def test_chained_runs_add_up(self):
+        self.check("10 passed in 1.0s\n...\n===== 1 failed, 4 passed in 9.0s =====\n", 14, 1, 0, 15)
+
+    def test_counts_tests_as_the_output_streams_in(self):
+        p = testcounts.Progress()
+        p.feed(b"============ test session starts ============\ncollected 12 items\n\n")
+        p.feed(b"tests/test_a.py ..F.")
+        self.assertEqual(p.snapshot(), {"passed": 3, "failed": 1, "skipped": 0, "total": 4, "expected": 12})
+        p.feed(b"s.   [ 50%]\ntests/test_b.py ..")
+        self.assertEqual(p.snapshot()["total"], 8)
+        p.feed(b"\x1b[32m....\x1b[0m [100%]\ncollected 3 items\nsmoke.py::test_x PASSED [ 33%]\n")
+        self.assertEqual(p.snapshot(), {"passed": 11, "failed": 1, "skipped": 1, "total": 13, "expected": 15})
+
+    def test_pytest_q_expected_total_comes_from_its_percentages(self):
+        p = testcounts.Progress()
+        p.feed("." * 80 + " [ 20%]\n")
+        self.assertEqual(p.snapshot()["expected"], 400)
+        p.feed("." * 320 + " [100%]\n400 passed in 9.0s\n" + "s" * 10 + " [ 50%]\n")
+        self.assertEqual(p.snapshot()["expected"], 420)   # the first run's 400, then half of a second run
+
+    def test_unittest_dots_count_before_their_line_ends(self):
+        p = testcounts.Progress()
+        p.feed("..s.F")
+        self.assertEqual(p.snapshot(), {"passed": 3, "failed": 1, "skipped": 1, "total": 5, "expected": 0})
+
+    def test_only_test_commands_count(self):
+        self.assertTrue(testcounts.is_test_command("/x/.venv/bin/python -m pytest -q"))
+        self.assertTrue(testcounts.is_test_command("pnpm run e2e --headed"))
+        self.assertFalse(testcounts.is_test_command("grep '\"ticket\": \"34\"' events.jsonl"))
+
     def test_output_that_isnt_a_test_run(self):
         self.assertIsNone(testcounts.parse("src/a.py\nsrc/b.py\n"))
         self.assertIsNone(testcounts.parse(""))

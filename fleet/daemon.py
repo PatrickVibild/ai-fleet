@@ -32,19 +32,28 @@ def tail(s, n=TAIL):
     return s if len(s) <= n else "…" + s[-n:]
 
 
-async def run_shell(cmd, cwd, timeout=1800):
+async def run_shell(cmd, cwd, timeout=1800, on_output=None):
+    """Run `cmd` with stderr folded into stdout. `on_output` gets each chunk as it arrives."""
     proc = await asyncio.create_subprocess_shell(
         cmd, cwd=str(cwd), stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
-        start_new_session=True)
+        start_new_session=True, env={**os.environ, "PYTHONUNBUFFERED": "1"})   # so test marks arrive as they're printed
+    chunks = []
+
+    async def pump():
+        while chunk := await proc.stdout.read(65536):
+            chunks.append(chunk)
+            if on_output:
+                on_output(chunk)
+        await proc.wait()
     try:
-        out, _ = await asyncio.wait_for(proc.communicate(), timeout)
+        await asyncio.wait_for(pump(), timeout)
     except asyncio.TimeoutError:
         try:
             os.killpg(proc.pid, 9)
         except ProcessLookupError:
             pass
         return 124, f"`{cmd}` timed out after {timeout}s"
-    return proc.returncode, out.decode(errors="replace")
+    return proc.returncode, b"".join(chunks).decode(errors="replace")
 
 
 def notify(title, body, urgent=True):
@@ -546,15 +555,21 @@ class Fleet:
         """Run a check command, listing it on the panel under the run's orchestrator while it runs and for a
         little while after, so a run that is only waiting on its tests doesn't look idle."""
         c = {"id": f"check-{uuid.uuid4().hex[:12]}", "what": what, "where": where, "cmd": cmd, "ticket": ticket,
-             "started": time.time(), "ended": None, "rc": None}
+             "started": time.time(), "ended": None, "rc": None, "progress": testcounts.Progress()}
         checks = self.checks.setdefault(run.id, [])
         checks[:] = [x for x in checks if not x["ended"] or time.time() - x["ended"] < CHECK_KEEP_SEC] + [c]
         try:
-            rc, out = await run_shell(cmd, cwd, timeout)
+            rc, out = await run_shell(cmd, cwd, timeout, on_output=c["progress"].feed)
         finally:
             c["ended"] = time.time()   # rc stays None if it crashed
-        c["rc"], c["tests"] = rc, testcounts.parse(out)
+        # the runner's own summary when it printed one; otherwise what we counted on the way
+        c["rc"], c["tests"] = rc, testcounts.parse(out) or self.live_tests(c)
         return rc, out
+
+    @staticmethod
+    def live_tests(c):
+        p = c["progress"].snapshot()
+        return p if p["total"] or p["expected"] else None
 
     def check_nodes(self, run):
         now = time.time()
@@ -571,7 +586,8 @@ class Fleet:
                 state, status, note = "done", f"Failed ({why}): `{c['cmd']}`", "red"
             out.append({"id": c["id"], "kind": "check", "name": f"daemon · {c['what']}", "tag": c["where"],
                         "state": state, "status": status, "note": note, "ticket": c["ticket"],
-                        "startedAt": c["started"], "endedAt": c["ended"], "tests": c.get("tests"), "children": []})
+                        "startedAt": c["started"], "endedAt": c["ended"],
+                        "tests": c.get("tests") if c["ended"] else self.live_tests(c), "children": []})
         return out
 
     # ------------------------------------------------------------------ merging
