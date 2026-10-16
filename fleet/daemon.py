@@ -680,8 +680,18 @@ class Fleet:
         a = req["action"]
         if a == "open":
             short = req["session"]
+            cmd = [claude.CLAUDE, "attach", short]
+            if not any(x.get("id") == short for x in await claude.agents(include_done=True)):
+                # `claude attach` only knows sessions still in `claude agents`; one that dropped out of it
+                # (an orchestrator stopped long ago) can still be resumed from its transcript.
+                sid = next((s for s in self.views if s.startswith(short)), None)
+                main = self.views[sid].main if sid else None
+                if not main:
+                    raise ValueError(f"session {short} is gone and has no transcript to resume")
+                cmd = ["sh", "-c", 'cd "$1" && exec "$2" --resume "$3"', "sh",
+                       main.workdir or str(paths.HOME), claude.CLAUDE, sid]
             subprocess.Popen(["setsid", "uwsm-app", "--", "xdg-terminal-exec", "--app-id=ai-fleet.attach",
-                              f"--title=claude {short}", "-e", claude.CLAUDE, "attach", short],
+                              f"--title=claude {short}", "-e", *cmd],
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
             return {}
         if a == "kill-session":
