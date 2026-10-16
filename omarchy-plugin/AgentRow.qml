@@ -217,12 +217,13 @@ Item {
         Text {
           Layout.fillWidth: true
           Layout.minimumWidth: 0
+          // "~" when the total is an estimate (pytest -q only prints percentages)
           text: !testLine.counting
-              ? "of " + r.row.testTotal + (r.row.kind !== "check" && r.row.testCmd !== "" ? " · " + r.row.testCmd : "")
+              ? "of " + r.row.testTotal + " tests" + (r.row.kind !== "check" && r.row.testCmd !== "" ? " · " + r.row.testCmd : "")
               : r.row.testExpected > 0
-                ? "· " + r.row.testTotal + " of " + r.row.testExpected + " run ("
+                ? "· " + r.row.testTotal + " of " + (r.row.testEstimated ? "~" : "") + r.row.testExpected + " tests done ("
                   + Math.floor(100 * r.row.testTotal / r.row.testExpected) + "%)"
-                : "· " + r.row.testTotal + " run so far"
+                : "· " + r.row.testTotal + " tests done so far"
           elide: Text.ElideRight
           color: r.view.dim
           font.family: r.view.fontFamily
