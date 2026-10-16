@@ -2,6 +2,8 @@
 
 Runs `/implement` on many tickets at once and shows every Claude agent in an Omarchy bar panel.
 
+![The Fleet panel: a run with four merged tickets running its final test suite, and one of your own sessions](docs/panel.png)
+
 - **daemon** (`fleet daemon`, systemd user service `ai-fleet`) schedules tickets onto Claude Code background
   sessions (`claude --bg -w <ticket>`), answers their hooks, merges finished work into the base branch, and
   writes `~/.local/state/ai-fleet/state.json` for the panel.
