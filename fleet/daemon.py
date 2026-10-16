@@ -15,7 +15,7 @@ import subprocess
 import time
 import uuid
 
-from . import claude, config, git, memory, paths
+from . import claude, config, git, memory, paths, skills
 from .runs import (ATTN, CONFLICT, KILLED, LIVE_RUN, MERGED, MERGING, READY, REVIEW, RUNNING, TESTING, WAIT,
                    Run, slug)
 from .transcripts import LIMIT_TEXT, SessionView, describe, trunc
@@ -100,6 +100,8 @@ class Fleet:
             for t in r.tickets.values():
                 if t["state"] in (TESTING, REVIEW):
                     t["state"] = RUNNING
+            if r.d.get("finalCheck") in ("running", "cleanup"):   # it died with us; schedule() starts it again
+                r.d["finalCheck"] = None
 
     # ------------------------------------------------------------------ server
     async def serve(self):
@@ -251,6 +253,10 @@ class Fleet:
             raise ValueError(f"check out {plan['base']} in {repo} first; finished tickets merge into it there")
         if await git.tracked_changes(repo):
             raise ValueError(f"{repo} has uncommitted changes; commit or stash them first")
+        for key in ("implement_command", "merge_command"):
+            why = skills.missing(self.cfg[key], repo)
+            if why:
+                raise ValueError(f"{key} {why}. Set it in {paths.LIMITS} (\"\" for none), then submit again.")
         orch = plan.pop("orchestrator", None) or await self.session_for_pid(pid)
         run = Run.from_plan(plan, orchestrator=orch)
         self.runs[run.id] = run
@@ -273,7 +279,8 @@ class Fleet:
             if r.d["status"] != "active" or r.d.get("held"):
                 continue
             if r.all_merged() and not r.d.get("finalCheck"):
-                r.d["finalCheck"] = "running"
+                r.d["finalCheck"], r.d["finalCheckAt"] = "running", time.time()
+                r.save()
                 asyncio.create_task(self.final_check(r))
             if limited:   # a new session would only hit the limit too
                 continue
@@ -281,9 +288,24 @@ class Fleet:
             for t in sorted(r.ready(), key=lambda t: (len(t["blockedBy"]), t["id"]))[:max(0, free)]:
                 await self.spawn_implementor(r, t)
 
+    def command(self, run, key):
+        """The slash command a prompt starts with, or "" when it's unset or no longer installed (a plugin update
+        can drop a skill mid-run; the session would only print "Unknown command" and sit idle)."""
+        cmd = (self.cfg[key] or "").strip()
+        why = skills.missing(cmd, run.d["repo"])
+        if not why:
+            return cmd
+        if key not in run.d.setdefault("missingCommands", []):
+            run.d["missingCommands"].append(key)
+            run.event("command_missing", setting=key, detail=why)
+            notify(f"{run.d['name']}: {key} is gone", f"{why}. Sessions get plain instructions instead; "
+                                                      f"fix {key} in {paths.LIMITS}.")
+        return ""
+
     def implementor_prompt(self, run, t):
         ref = f" ({t['ref']})" if t.get("ref") else ""
-        return (f"{self.cfg['implement_command']} ticket #{t['id']}{ref}: {t['title']}\n\n{t['body']}\n\n"
+        cmd = self.command(run, "implement_command")
+        return (f"{cmd + ' ticket' if cmd else 'Implement ticket'} #{t['id']}{ref}: {t['title']}\n\n{t['body']}\n\n"
                 f"You are running unattended under ai-fleet. Ask questions only with the AskUserQuestion tool. "
                 f"Commit your work on the current branch. Never push, and don't merge into `{run.d['base']}`: "
                 f"the fleet merges finished tickets itself.")
@@ -470,7 +492,7 @@ class Fleet:
         h["state"] = "done"
         run.save()
         t = run.ticket(h["ticket"])
-        t["state"] = READY
+        t["state"], t["attn"] = READY, None
         asyncio.create_task(self.merge_ticket(run, t))
         return {}
 
@@ -521,7 +543,7 @@ class Fleet:
                 return
             if not ok:
                 return self.escalate(run, t, "merge_failed", "git merge failed.", tail(out, 1500))
-            t["state"] = MERGED
+            t["state"], t["attn"] = MERGED, None
             self.log(run, t, f"merged into {run.d['base']}")
             run.event("merged", ticket=t["id"])
             run.save()
@@ -535,16 +557,33 @@ class Fleet:
                     await self.spawn_fixer(run, f"merging ticket #{t['id']} ({t['title']})", quick, out)
 
     async def final_check(self, run):
+        try:
+            await self._final_check(run)
+        except Exception as e:   # a crash here would leave the run looking busy forever
+            run.d["finalCheck"] = "error"
+            run.d["problem"] = {"kind": "final_check_failed", "msg": f"The final check crashed: {type(e).__name__}: {e}. "
+                                                                     "Resume the run to try again."}
+            run.event("attention", kind="final_check_failed", msg=run.d["problem"]["msg"])
+            run.save()
+
+    async def _final_check(self, run):
         full = (run.d["checks"] or {}).get("full") or (run.d["checks"] or {}).get("test")
+        run.event("final_check", cmd=full or "", tickets=len(run.tickets))
+        notify(f"{run.d['name']}: all {len(run.tickets)} tickets merged",
+               f"Running the full suite on {run.d['base']} before calling the run done." if full else "Wrapping up.",
+               urgent=False)
         async with self.lock(run.d["repo"]):
             rc, out = (await run_shell(full, run.d["repo"], timeout=3600)) if full else (0, "")
         if rc == 0:
-            run.d["status"], run.d["finalCheck"] = "done", "green"
+            run.d["finalCheck"] = "cleanup"
+            run.save()
             run.d["kept"] = await self.cleanup(run)
+            run.d["status"], run.d["finalCheck"] = "done", "green"
             run.event("run_done", tickets=len(run.tickets), kept=run.d["kept"])
             run.save()
-            notify(f"{run.d['name']}: all {len(run.tickets)} tickets merged",
-                   f"Full suite is green on {run.d['base']}. Nothing was pushed.", urgent=False)
+            notify(f"{run.d['name']}: run done",
+                   f"All {len(run.tickets)} tickets merged and the full suite is green on {run.d['base']}. "
+                   f"Nothing was pushed.", urgent=False)
         else:
             run.d["finalCheck"] = "red"
             self.hold(run, f"The full suite fails on `{run.d['base']}`. A fixer is on it.")
@@ -571,7 +610,8 @@ class Fleet:
         sid = str(uuid.uuid4())
         base = run.d["base"]
         quick = (run.d["checks"] or {}).get("quick")
-        prompt = (f"{self.cfg['merge_command']}\n\nMerge `{base}` into this branch (`git merge {base}`) and resolve "
+        cmd = self.command(run, "merge_command")
+        prompt = ((f"{cmd}\n\n" if cmd else "") + f"Merge `{base}` into this branch (`git merge {base}`) and resolve "
                   f"every conflict. This branch implements ticket #{t['id']}: {t['title']}. Conflicting files:\n{files}\n\n"
                   f"Keep the intent of both sides." + (f" Then run `{quick}` until it passes." if quick else "") +
                   " Commit the merge. Never push. If a conflict needs a product decision, ask with AskUserQuestion.")
@@ -654,6 +694,8 @@ class Fleet:
             run.d["status"] = "paused"
         elif a == "resume":
             run.d["status"] = "active"
+            if run.d.get("finalCheck") == "error":
+                run.d["finalCheck"], run.d["problem"] = None, None
             if (run.d.get("held") or {}).get("kind") == "repo":
                 run.d["held"] = None
                 for t in run.tickets.values():
@@ -669,6 +711,10 @@ class Fleet:
             if a == "kill":
                 await self.kill_ticket(run, t)
             elif a == "retry" and (t.get("attn") or {}).get("kind") == "merge_failed":
+                for h in run.d["helpers"]:   # a stalled merger would share the worktree with the next one
+                    if h["kind"] == "merger" and h.get("ticket") == t["id"] and h.get("state") == "run":
+                        await claude.stop(h["short"])
+                        h["state"] = "killed"
                 t["state"], t["attn"] = READY, None     # the work is done; only the merge needs another go
                 asyncio.create_task(self.merge_ticket(run, t))
             elif a == "retry":
@@ -702,6 +748,7 @@ class Fleet:
             raise ValueError("this ticket never started")
         await claude.stop(s["short"])
         t["state"], t["attn"], t["fixRound"] = RUNNING, None, 0
+        s["started"] = time.time()   # the stall check waits for a reply after this
         try:
             short = await claude.spawn_bg(cwd=s["worktree"], prompt=note, resume=s["sessionId"],
                                           name=f"{run.d['name']} #{t['id']} implementor",
@@ -863,6 +910,47 @@ class Fleet:
                 a = self.agents.get(s.get("sessionId"))
                 if t["state"] == RUNNING and a and not alive(a) and time.time() - s.get("started", 0) > 60:
                     self.escalate(r, t, "session_ended", "The implementor's session ended before the ticket was done.")
+        self.check_stalls()
+
+    def stalled(self, s):
+        """Why a fleet session that should be working isn't, or None. A session that never got past an unknown slash
+        command counts at once; any other gets `stall_sec` to send its first reply after it started."""
+        sid = (s or {}).get("sessionId")
+        v = self.views.get(sid)
+        main = v.main if v else None
+        if main and main.unknown_command:
+            return f"never started: {main.unknown_command}"
+        wait = self.cfg["stall_sec"]
+        if not s or time.time() - s.get("started", time.time()) < wait or not alive(self.agents.get(sid)):
+            return None   # too early, or ended (the session_ended check covers that)
+        if (main and main.limited) or self.usage()["limited"]:
+            return None
+        if not main:
+            return f"has no transcript {wait // 60} min after starting"
+        if (main.replied_at or 0) < s["started"]:
+            return f"hasn't replied in the {wait // 60} min since it started"
+        return None
+
+    def check_stalls(self):
+        for r in self.runs.values():
+            if r.d["status"] not in LIVE_RUN:
+                continue
+            for t in r.tickets.values():
+                why = self.stalled(t.get("session")) if t["state"] == RUNNING else None
+                if why:
+                    self.escalate(r, t, "stalled", f"The implementor {why}. Open it, or retry the ticket.")
+            for h in r.d["helpers"]:
+                why = self.stalled(h) if h.get("state") == "run" and not h.get("stalled") else None
+                if not why:
+                    continue
+                h["stalled"] = True
+                t = r.ticket(h.get("ticket")) if h["kind"] == "merger" else None
+                if t and t["state"] == CONFLICT:
+                    self.escalate(r, t, "merge_failed", f"The merger {why}. Retry starts a new merger.")
+                elif h["kind"] == "fixer":
+                    r.d["problem"] = {"kind": "fixer_stalled", "msg": f"The fixer {why}. Open it to nudge it."}
+                    r.event("attention", kind="fixer_stalled", msg=r.d["problem"]["msg"])
+                r.save()
 
     def _learn_window(self, sid):
         p = paths.STATUSLINE / f"{sid}.json"
@@ -1032,6 +1120,8 @@ class Fleet:
             tree["children"] = lanes + [c for c in tree.get("children", []) if c["kind"] != "implementor"]
             runs_out.append({"id": r.id, "name": r.d["name"], "repo": r.d["repo"], "base": r.d["base"],
                              "status": r.d["status"], "held": r.d.get("held"), "problem": r.d.get("problem"),
+                             "finalCheck": r.d.get("finalCheck"), "finalCheckAt": r.d.get("finalCheckAt"),
+                             "finalCmd": (r.d["checks"] or {}).get("full") or (r.d["checks"] or {}).get("test") or "",
                              "slots": {"used": r.slots_used(), "max": self.cfg["implementors_per_orchestrator"]},
                              "tickets": tickets, "tree": tree})
             for t in r.tickets.values():

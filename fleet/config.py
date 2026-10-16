@@ -10,11 +10,12 @@ DEFAULTS = {
     "summary_model": "haiku",
     "summary_interval_sec": 20,
     "implement_command": "/mattpocock-skills:implement",
-    "merge_command": "/mattpocock-skills:resolving-merge-conflicts",
+    "merge_command": "",  # slash command the merger prompt starts with; empty = plain instructions only
     "permission_mode": "auto",
     "model": "",  # model for fleet sessions; empty = your Claude Code default
     "fix_rounds": 3,
     "verdict_timeout_sec": 600,
+    "stall_sec": 300,  # a fleet session with no reply from the model this long after starting needs you
     "roles": {
         # skill name (namespace stripped) -> name shown in the panel
         "tdd": "tester",

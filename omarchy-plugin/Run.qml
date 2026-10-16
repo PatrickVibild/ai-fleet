@@ -125,6 +125,16 @@ ColumnLayout {
   }
   Banner {
     Layout.fillWidth: true
+    visible: !!sec.run && sec.run.status === "active" && ["running", "cleanup"].indexOf(sec.run.finalCheck) >= 0
+    text: !sec.run ? "" : sec.run.finalCheck === "cleanup"
+      ? "◌  Every ticket is merged and the full suite is green. Cleaning up worktrees…"
+      : "◌  Every ticket is merged. Running the full suite on " + sec.run.base
+        + (sec.run.finalCheckAt ? " since " + Qt.formatTime(new Date(sec.run.finalCheckAt * 1000), "HH:mm") : "")
+        + (sec.run.finalCmd ? ": " + sec.run.finalCmd : "")
+    tone: sec.fleet.cyan; font: sec.view.fontFamily
+  }
+  Banner {
+    Layout.fillWidth: true
     visible: !!sec.run && sec.run.status === "done"
     text: "✓  Every ticket is merged and the full suite is green. Nothing was pushed."
     tone: sec.fleet.green; font: sec.view.fontFamily

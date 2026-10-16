@@ -57,7 +57,9 @@ Read `last_message`. A question or a blocker the sources settle: `fix` with the 
 
 ### Everything else
 
-- `attention`: relay it in one line (the panel has the buttons).
+- `final_check`: every ticket is merged and the daemon is running the `full` check on the base branch. Tell the user in one line that the tickets are in and the full suite is running, with the command; it can take a while. Keep watching: `run_done` or a `held` (a fixer is on a red suite) follows.
+- `command_missing`: the configured `implement_command` or `merge_command` is no longer installed (a plugin update dropped it). Sessions now get plain instructions instead. Tell the user in one line, quoting `detail`.
+- `attention`: relay it in one line (the panel has the buttons). Kind `stalled` (or a `merge_failed` whose message says the merger never started or hasn't replied) means the session sits idle: say so, and that they can open it or retry.
 - `held`, `conflict`, `green_again`, `verdict_timeout`: one line each, or none if nothing changed for the user.
 - `run_done`: report tickets merged and any kept worktrees, say that nothing was pushed, and stop watching. You're done.
 - `aborted`: confirm, and stop watching.
