@@ -304,6 +304,29 @@ class WakeOrchestrator(Stalls):
         self.assertEqual((self.spawned, self.stopped), ([], []))
 
 
+class LiveUsage(unittest.TestCase):
+    def test_parses_the_usage_endpoint(self):
+        from fleet import account
+        got = account.parse({"five_hour": {"utilization": 12.4, "resets_at": "2026-10-16T16:00:00+00:00"},
+                             "seven_day": {"utilization": None}})
+        self.assertEqual(got, {"five_hour": {"used": 12, "resetsAt": 1792166400.0}})
+
+    def test_fresh_live_numbers_beat_a_stale_statusline(self):
+        st = Path(tempfile.mkdtemp())
+        self.addCleanup(setattr, paths, "STATUSLINE", paths.STATUSLINE)
+        paths.STATUSLINE = st
+        later = time.time() + 3600
+        (st / "old.json").write_text(json.dumps({"rate_limits": {"five_hour": {"used_percentage": 96, "resets_at": later}}}))
+        f = Fleet.__new__(Fleet)
+        f.views, f.agents = {}, {}
+        f.live_usage = None
+        self.assertEqual(f.usage()["five_hour"]["used"], 96)
+        f.live_usage, f._usage_at = (time.time(), {"five_hour": {"used": 0, "resetsAt": later}}), 0
+        self.assertEqual(f.usage()["five_hour"]["used"], 0)
+        f.live_usage, f._usage_at = (time.time() - 3600, {"five_hour": {"used": 0, "resetsAt": later}}), 0
+        self.assertEqual(f.usage()["five_hour"]["used"], 96)   # too old: back to the statusline
+
+
 class ClaudeMd(unittest.TestCase):
     def test_counts_user_file_and_files_up_to_the_git_root_not_beyond(self):
         root = Path(tempfile.mkdtemp())
