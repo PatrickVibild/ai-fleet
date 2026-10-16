@@ -19,6 +19,7 @@ LIMITS = CONFIG / "limits.toml"
 MODEL_WINDOWS = STATE / "model-windows.json"
 
 CLAUDE_PROJECTS = HOME / ".claude/projects"
+CLAUDE_PLUGINS = HOME / ".claude/plugins"
 HOOK = ROOT / "hooks/fleet-hook"
 STATUSLINE_HOOK = ROOT / "hooks/fleet-statusline"
 

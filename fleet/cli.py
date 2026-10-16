@@ -9,7 +9,7 @@ import time
 from . import paths
 
 JUDGMENT = {"question", "verdict_needed", "attention", "held", "conflict", "run_done", "green_again",
-            "verdict_timeout", "aborted", "run_started"}
+            "verdict_timeout", "aborted", "run_started", "final_check", "command_missing"}
 
 
 def call(req, timeout=None):
@@ -49,6 +49,10 @@ def cmd_status(a):
         print(f"\n{r['id']}  [{r['status']}]  {merged}/{len(r['tickets'])} merged  {r['repo']}")
         if r.get("held"):
             print(f"  held: {r['held']['reason']}")
+        if r.get("finalCheck") in ("running", "cleanup") and r["status"] == "active":
+            mins = int((time.time() - (r.get("finalCheckAt") or time.time())) // 60)
+            print(f"  every ticket merged; final check running for {mins} min: {r.get('finalCmd') or '(none)'}"
+                  if r["finalCheck"] == "running" else "  every ticket merged and green; cleaning up worktrees")
         for t in r["tickets"]:
             blocked = f" (blocked by {', '.join('#' + b for b in t['blockedBy'])})" if t["blockedBy"] else ""
             print(f"  #{t['id']:<5} {t['state']:<9} {t['title']}{blocked}")

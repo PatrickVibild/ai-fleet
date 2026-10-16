@@ -7,8 +7,9 @@ from pathlib import Path
 
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 
-from fleet import memory, paths  # noqa: E402
-from fleet.runs import ATTN, KILLED, MERGED, RUNNING, WAIT, Run  # noqa: E402
+from fleet import config, memory, paths, skills  # noqa: E402
+from fleet.daemon import Fleet  # noqa: E402
+from fleet.runs import ATTN, CONFLICT, KILLED, MERGED, RUNNING, WAIT, Run  # noqa: E402
 from fleet.transcripts import SessionView, describe  # noqa: E402
 
 PLAN = {"repo": "/tmp/x", "base": "main", "tickets": [
@@ -137,6 +138,99 @@ class Transcripts(unittest.TestCase):
     def test_describe(self):
         self.assertEqual(describe("Edit", {"file_path": "/r/src/a.ts"}, "/r"), "Editing src/a.ts")
         self.assertEqual(describe("Skill", {"skill": "mattpocock-skills:code-review"}), "Using /code-review")
+
+
+class Skills(unittest.TestCase):
+    def setUp(self):
+        root = Path(tempfile.mkdtemp())
+        for attr in ("HOME", "CLAUDE_PLUGINS"):
+            self.addCleanup(setattr, paths, attr, getattr(paths, attr))
+        paths.HOME = root / "home"
+        paths.CLAUDE_PLUGINS = paths.HOME / ".claude/plugins"
+        install = root / "cache/mp/1.3.1"
+        (install / "skills/engineering/implement").mkdir(parents=True)
+        (install / "skills/engineering/implement/SKILL.md").write_text("---\nname: implement\n---\n")
+        (install / ".claude-plugin").mkdir()
+        (install / ".claude-plugin/plugin.json").write_text(json.dumps({"skills": ["./skills/engineering/implement"]}))
+        paths.CLAUDE_PLUGINS.mkdir(parents=True)
+        (paths.CLAUDE_PLUGINS / "installed_plugins.json").write_text(json.dumps(
+            {"plugins": {"mp@official": [{"installPath": str(install), "version": "1.3.1"}]}}))
+        (paths.HOME / ".claude/skills/mine").mkdir(parents=True)
+        (paths.HOME / ".claude/skills/mine/SKILL.md").write_text("x")
+
+    def test_finds_plugin_skills_listed_in_the_manifest(self):
+        self.assertIsNone(skills.missing("/mp:implement"))
+        self.assertIsNone(skills.missing(""))
+
+    def test_names_what_is_missing(self):
+        self.assertEqual(skills.missing("/mp:resolving-merge-conflicts"),
+                         "`/mp:resolving-merge-conflicts`: mp 1.3.1 has no skill or command named resolving-merge-conflicts")
+        self.assertIn("plugin isn't installed", skills.missing("/other:implement"))
+
+    def test_plain_names_look_in_user_and_repo_skills(self):
+        self.assertIsNone(skills.missing("/mine"))
+        self.assertIsNone(skills.missing("/implement"))
+        self.assertIn("isn't an installed", skills.missing("/nope"))
+
+
+class Stalls(unittest.TestCase):
+    """Fleet sessions that start but never do anything raise attention instead of sitting there."""
+
+    def setUp(self):
+        self.projects = Path(tempfile.mkdtemp())
+        self.addCleanup(setattr, paths, "CLAUDE_PROJECTS", paths.CLAUDE_PROJECTS)
+        paths.CLAUDE_PROJECTS = self.projects
+        (self.projects / "-repo").mkdir()
+        self.fleet = Fleet.__new__(Fleet)
+        self.fleet.cfg = {**config.DEFAULTS, "stall_sec": 300}
+        self.fleet.views, self.fleet.agents, self.fleet.runs = {}, {}, {}
+        self.fleet.usage = lambda: {"limited": False}
+        self.run = Run.from_plan({"repo": "/tmp/x", "base": "main", "tickets": [{"id": "1", "title": "A"}]})
+        self.run.d["status"] = "active"
+        self.fleet.runs[self.run.id] = self.run
+
+    def session(self, sid, started_ago, lines):
+        (self.projects / "-repo" / f"{sid}.jsonl").write_text("".join(json.dumps(e) + "\n" for e in lines))
+        self.fleet.agents[sid] = {"sessionId": sid, "pid": 123}
+        v = self.fleet.views[sid] = SessionView(sid)
+        v.poll()
+        return {"sessionId": sid, "short": sid[:8], "started": time.time() - started_ago}
+
+    def iso(self, dt):
+        return time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(time.time() + dt)) + ".000Z"
+
+    def test_unknown_slash_command_fails_the_merger_at_once(self):
+        t = self.run.ticket("1")
+        t["state"] = CONFLICT
+        h = self.session("m1", 10, [{"type": "system", "subtype": "informational", "timestamp": self.iso(-9),
+                                     "content": "Unknown command: /mp:resolving-merge-conflicts"}])
+        self.run.d["helpers"].append({"kind": "merger", "ticket": "1", "state": "run", **h})
+        self.fleet.check_stalls()
+        self.assertEqual(t["state"], ATTN)
+        self.assertEqual(t["attn"]["kind"], "merge_failed")
+        self.assertIn("Unknown command", t["attn"]["msg"])
+        self.fleet.check_stalls()   # reported once
+        events = (self.run.dir / "events.jsonl").read_text().splitlines()
+        self.assertEqual(sum('"attention"' in e for e in events), 1)
+
+    def test_implementor_without_a_reply_after_stall_sec(self):
+        t = self.run.ticket("1")
+        t["state"] = RUNNING
+        t["session"] = self.session("i1", 400, [entry("user", self.iso(-399), "do the ticket")])
+        self.fleet.check_stalls()
+        self.assertEqual(t["state"], ATTN)
+        self.assertEqual(t["attn"]["kind"], "stalled")
+
+    def test_quiet_but_working_or_young_sessions_are_left_alone(self):
+        t = self.run.ticket("1")
+        t["state"] = RUNNING
+        t["session"] = self.session("i2", 400, [entry("user", self.iso(-399), "do it"),
+                                                entry("assistant", self.iso(-390), [{"type": "text", "text": "on it"}], id="a")])
+        self.fleet.check_stalls()
+        self.assertEqual(t["state"], RUNNING)
+        t["session"] = self.session("i3", 100, [entry("user", self.iso(-99), "do it")])
+        self.fleet.check_stalls()
+        self.assertEqual(t["state"], RUNNING)
 
 
 class ClaudeMd(unittest.TestCase):

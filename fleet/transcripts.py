@@ -107,6 +107,8 @@ class Track:
         self.workdir = None              # cwd recorded in the transcript
         self.permission_mode = None      # latest permissionMode recorded on a prompt
         self.limited = None              # (ts, message) while the last reply was a usage-limit error
+        self.replied_at = None           # ts of the model's latest real reply
+        self.unknown_command = None      # "Unknown command: /x" while the session never got past its slash command
 
     def poll(self):
         try:
@@ -142,6 +144,8 @@ class Track:
         m = d.get("message") or {}
         content = m.get("content")
         kind = d.get("type")
+        if kind == "system" and str(d.get("content") or "").startswith("Unknown command:"):
+            self.unknown_command = d["content"]
         if kind == "user" and isinstance(content, str) and not self.task and not d.get("isMeta"):
             text = content
             if "<command-args>" in text:
@@ -159,6 +163,8 @@ class Track:
             return
         if kind == "assistant":
             self.limited = None
+            self.unknown_command = None
+            self.replied_at = ts or self.replied_at
             self.model = m.get("model") or self.model
             u = m.get("usage")
             mid = m.get("id")
