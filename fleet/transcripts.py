@@ -12,7 +12,7 @@ from collections import deque
 from datetime import datetime
 from pathlib import Path
 
-from . import paths
+from . import paths, testcounts
 
 SHELL_MIN_SEC = 3          # a Bash call shows as its own row once it has run this long
 AGENT_IDLE_DONE_SEC = 90   # a subagent with no new lines for this long counts as finished
@@ -109,6 +109,7 @@ class Track:
         self.limited = None              # (ts, message) while the last reply was a usage-limit error
         self.replied_at = None           # ts of the model's latest real reply
         self.unknown_command = None      # "Unknown command: /x" while the session never got past its slash command
+        self.tests = None                # pass/fail counts of the latest Bash call whose output was a test run
 
     def poll(self):
         try:
@@ -193,7 +194,16 @@ class Track:
         elif kind == "user" and isinstance(content, list):
             for x in content:
                 if x.get("type") == "tool_result":
-                    self.open_tools.pop(x.get("tool_use_id"), None)
+                    tool = self.open_tools.pop(x.get("tool_use_id"), None)
+                    if tool and tool[0] == "Bash":
+                        self._test_result(tool[1], x.get("content"), ts)
+
+    def _test_result(self, inp, content, ts):
+        text = content if isinstance(content, str) else "\n".join(
+            c.get("text", "") for c in content or [] if isinstance(c, dict))
+        found = testcounts.parse(text)
+        if found:
+            self.tests = {**found, "cmd": trunc(inp.get("command"), 60), "at": ts}
 
     def running_shells(self, now):
         return [(tid, inp, t0, sk) for tid, (name, inp, t0, sk) in self.open_tools.items()
@@ -268,7 +278,7 @@ class SessionView:
                     "state": "done" if done else "run", "startedAt": sub.first_ts,
                     "endedAt": sub.last_ts if done else None, "tokens": sub.tokens,
                     "ctx": {"used": sub.ctx, "size": window_for(sub.model)}, "status": sub.status,
-                    "events": list(sub.events), "task": sub.task or desc, "children": self._children(sub, roles, window_for, now, alive and not done)}
+                    "events": list(sub.events), "task": sub.task or desc, "tests": sub.tests, "children": self._children(sub, roles, window_for, now, alive and not done)}
             place(node, tr.agent_parent_skill[meta.get("toolUseId")])
 
         if alive:

@@ -169,6 +169,7 @@ function rowFor(n, depth, extra) {
   var c = n.ctx || {}
   var md = n.claudeMd || {}
   var g = gitFields(n.git)
+  var tc = n.tests || {}
   var r = {
     key: n.id, depth: depth, kind: n.kind || "", name: n.name || "", tag: n.tag || "", label: n.label || "",
     state: n.state || "", status: n.status || "", summary: n.summary || "", note: n.note || "",
@@ -176,7 +177,9 @@ function rowFor(n, depth, extra) {
     mdTokens: md.tokens || 0, mdFiles: mdFiles(md, c.size),
     startedAt: n.startedAt || 0, endedAt: n.endedAt || 0, short: n.short || "", ticket: n.ticket || "",
     waitingFor: n.waitingFor || "", hasKids: (n.children || []).length > 0, expanded: false,
-    runId: "", lane: "", laneFirst: false, laneLast: false, activity: n.activity || "", alive: !!n.alive
+    runId: "", lane: "", laneFirst: false, laneLast: false, activity: n.activity || "", alive: !!n.alive,
+    testTotal: tc.total || 0, testPassed: tc.passed || 0, testFailed: tc.failed || 0, testSkipped: tc.skipped || 0,
+    testCmd: tc.cmd || ""
   }
   for (var f in g) r[f] = g[f]
   for (var k in extra) r[k] = extra[k]

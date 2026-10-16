@@ -15,7 +15,7 @@ import subprocess
 import time
 import uuid
 
-from . import account, claude, config, git, memory, paths, skills
+from . import account, claude, config, git, memory, paths, skills, testcounts
 from .runs import (ATTN, CONFLICT, KILLED, LIVE_RUN, MERGED, MERGING, READY, REVIEW, RUNNING, TESTING, WAIT,
                    Run, slug)
 
@@ -24,6 +24,7 @@ WAKE_EVERY_SEC = 600     # and isn't woken more often than this
 from .transcripts import LIMIT_TEXT, SessionView, describe, trunc
 
 TAIL = 3500
+CHECK_KEEP_SEC = 120   # how long a finished check stays on the panel
 
 
 def tail(s, n=TAIL):
@@ -101,6 +102,7 @@ class Fleet:
         self.heard = {}          # run id -> when we last saw its orchestrator following it
         self.gitinfo = {}        # checkout path -> git.status() of a finished run's repo or a session's cwd
         self.pushes = {}         # checkout path -> the last push from the panel: {state, kind, msg, at}
+        self.checks = {}         # run id -> check commands the daemon runs itself, shown under the orchestrator
         try:
             self.windows = json.loads(paths.MODEL_WINDOWS.read_text())
         except (OSError, json.JSONDecodeError):
@@ -474,7 +476,7 @@ class Fleet:
         if test:
             t["state"] = TESTING
             run.save()
-            rc, out = await run_shell(test, wt)
+            rc, out = await self.run_check(run, "tests", f"#{t['id']} {t['title']}", test, wt, ticket=t["id"])
             if rc != 0:
                 t["fixRound"] = t.get("fixRound", 0) + 1
                 if t["fixRound"] == 1:
@@ -539,6 +541,39 @@ class Fleet:
         asyncio.create_task(self.merge_fixer(run, h))
         return {}
 
+    # ------------------------------------------------------------------ checks
+    async def run_check(self, run, what, where, cmd, cwd, timeout=1800, ticket=None):
+        """Run a check command, listing it on the panel under the run's orchestrator while it runs and for a
+        little while after, so a run that is only waiting on its tests doesn't look idle."""
+        c = {"id": f"check-{uuid.uuid4().hex[:12]}", "what": what, "where": where, "cmd": cmd, "ticket": ticket,
+             "started": time.time(), "ended": None, "rc": None}
+        checks = self.checks.setdefault(run.id, [])
+        checks[:] = [x for x in checks if not x["ended"] or time.time() - x["ended"] < CHECK_KEEP_SEC] + [c]
+        try:
+            rc, out = await run_shell(cmd, cwd, timeout)
+        finally:
+            c["ended"] = time.time()   # rc stays None if it crashed
+        c["rc"], c["tests"] = rc, testcounts.parse(out)
+        return rc, out
+
+    def check_nodes(self, run):
+        now = time.time()
+        out = []
+        for c in self.checks.get(run.id, []):
+            if c["ended"] and now - c["ended"] >= CHECK_KEEP_SEC:
+                continue
+            if not c["ended"]:
+                state, status, note = "run", f"Running `{c['cmd']}`", "running"
+            elif c["rc"] == 0:
+                state, status, note = "done", f"Passed: `{c['cmd']}`", "green"
+            else:
+                why = "crashed" if c["rc"] is None else "timed out" if c["rc"] == 124 else f"exit {c['rc']}"
+                state, status, note = "done", f"Failed ({why}): `{c['cmd']}`", "red"
+            out.append({"id": c["id"], "kind": "check", "name": f"daemon · {c['what']}", "tag": c["where"],
+                        "state": state, "status": status, "note": note, "ticket": c["ticket"],
+                        "startedAt": c["started"], "endedAt": c["ended"], "tests": c.get("tests"), "children": []})
+        return out
+
     # ------------------------------------------------------------------ merging
     async def checkout_ok(self, run):
         repo, base = run.d["repo"], run.d["base"]
@@ -584,7 +619,8 @@ class Fleet:
                 await claude.stop(s["short"])   # done; don't leave idle agents around
             quick = (run.d["checks"] or {}).get("quick")
             if quick:
-                rc, out = await run_shell(quick, run.d["repo"])
+                rc, out = await self.run_check(run, "quick check", f"{run.d['base']} after #{t['id']}", quick,
+                                               run.d["repo"], ticket=t["id"])
                 if rc != 0:
                     self.hold(run, f"`{run.d['base']}` went red after merging #{t['id']}. A fixer is on it.")
                     await self.spawn_fixer(run, f"merging ticket #{t['id']} ({t['title']})", quick, out)
@@ -606,7 +642,8 @@ class Fleet:
                f"Running the full suite on {run.d['base']} before calling the run done." if full else "Wrapping up.",
                urgent=False)
         async with self.lock(run.d["repo"]):
-            rc, out = (await run_shell(full, run.d["repo"], timeout=3600)) if full else (0, "")
+            rc, out = (await self.run_check(run, "full suite", run.d["base"], full, run.d["repo"], timeout=3600)) \
+                if full else (0, "")
         if rc == 0:
             run.d["finalCheck"] = "cleanup"
             run.save()
@@ -697,7 +734,8 @@ class Fleet:
                 run.d["problem"] = {"kind": "fixer_failed", "msg": "The fixer's branch didn't merge cleanly.", "output": tail(out, 1500)}
                 run.save()
                 return
-            rc, out = await run_shell(h["cmd"], run.d["repo"], timeout=3600)
+            rc, out = await self.run_check(run, "recheck", f"{run.d['base']} with the fix", h["cmd"], run.d["repo"],
+                                           timeout=3600)
         if rc == 0:
             run.d["held"] = None
             run.d["problem"] = None
@@ -1239,7 +1277,7 @@ class Fleet:
                 "status": status, "summary": self.summaries.get(sid), "events": list(main.events) if main else [],
                 "task": main.task if main else "", "activity": "waiting for you" if waiting else
                 ("working" if a.get("status") == "busy" else "idle" if live else "finished"),
-                "limited": limited,
+                "limited": limited, "tests": main.tests if main else None,
                 "children": v.tree(self.cfg["roles"], self.window_for, session_alive=live) if v else []}
         for c in node["children"]:
             self._add_summaries(c)
@@ -1305,6 +1343,9 @@ class Fleet:
                     tag = f"#{h['ticket']} → {r.d['base']}" if h["kind"] == "merger" else f"{r.d['base']} after {h.get('after', '')}"
                     lanes.append(self.session_node(h["sessionId"], h["kind"], h["kind"], tag,
                                                    state=None if h.get("state") == "run" else "done"))
+            for c in self.check_nodes(r):   # beside its ticket's lane, or last for the base-branch checks
+                at = max((i for i, n in enumerate(lanes) if c["ticket"] and n.get("ticket") == c["ticket"]), default=None)
+                lanes.insert(len(lanes) if at is None else at + 1, c)
             orch = r.d.get("orchestrator")
             tree = self.session_node(orch, "orchestrator", "orchestrator", r.d["name"]) if orch else {
                 "id": f"orch-{r.id}", "kind": "orchestrator", "name": "orchestrator", "tag": r.d["name"],

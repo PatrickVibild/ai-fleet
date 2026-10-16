@@ -7,7 +7,7 @@ from pathlib import Path
 
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 
-from fleet import config, memory, paths, skills  # noqa: E402
+from fleet import config, memory, paths, skills, testcounts  # noqa: E402
 from fleet.daemon import Fleet  # noqa: E402
 from fleet.runs import ATTN, CONFLICT, KILLED, MERGED, RUNNING, WAIT, Run  # noqa: E402
 from fleet.transcripts import SessionView, describe  # noqa: E402
@@ -140,6 +140,42 @@ class Transcripts(unittest.TestCase):
         self.assertEqual(describe("Skill", {"skill": "mattpocock-skills:code-review"}), "Using /code-review")
 
 
+class TestCounts(unittest.TestCase):
+    def check(self, out, passed, failed, skipped, total):
+        self.assertEqual(testcounts.parse(out), {"passed": passed, "failed": failed, "skipped": skipped, "total": total})
+
+    def test_reads_each_runners_summary(self):
+        self.check("collected 43\n..F\n===== 1 failed, 40 passed, 2 skipped in 1.20s =====\n", 40, 1, 2, 43)
+        self.check("40 passed, 1 error in 0.50s\n", 40, 1, 0, 41)
+        self.check("....\n------\nRan 41 tests in 4.012s\n\nOK (skipped=2)\n", 39, 0, 2, 41)
+        self.check("Ran 10 tests in 0.1s\n\nFAILED (failures=2, errors=1)\n", 7, 3, 0, 10)
+        self.check("Test Suites: 1 failed, 3 passed, 4 total\nTests:       1 failed, 2 skipped, 40 passed, 43 total\n", 40, 1, 2, 43)
+        self.check(" Test Files  1 failed | 3 passed (4)\n      Tests  1 failed | 40 passed (41)\n", 40, 1, 0, 41)
+        self.check("\x1b[32m  40 passed\x1b[39m (1.2m)\n  1 failed\n  3 flaky\n", 43, 1, 0, 44)
+        self.check("  40 passing (2s)\n  2 pending\n  1 failing\n", 40, 1, 2, 43)
+        self.check("test result: ok. 5 passed; 0 failed; 1 ignored\ntest result: FAILED. 3 passed; 1 failed; 0 ignored\n", 8, 1, 1, 10)
+        self.check("=== RUN TestA\n--- PASS: TestA (0.00s)\n--- FAIL: TestB (0.01s)\n", 1, 1, 0, 2)
+
+    def test_output_that_isnt_a_test_run(self):
+        self.assertIsNone(testcounts.parse("src/a.py\nsrc/b.py\n"))
+        self.assertIsNone(testcounts.parse(""))
+
+    def test_an_agents_latest_test_command_is_counted(self):
+        projects = Path(tempfile.mkdtemp())
+        self.addCleanup(setattr, paths, "CLAUDE_PROJECTS", paths.CLAUDE_PROJECTS)
+        paths.CLAUDE_PROJECTS = projects
+        (projects / "-r").mkdir()
+        lines = [entry("assistant", "2026-10-16T10:00:00.000Z",
+                       [{"type": "tool_use", "id": "b1", "name": "Bash", "input": {"command": "pytest -q"}}], id="a1"),
+                 entry("user", "2026-10-16T10:00:05.000Z",
+                       [{"type": "tool_result", "tool_use_id": "b1", "content": "2 failed, 9 passed in 0.3s"}])]
+        (projects / "-r" / "s1.jsonl").write_text("".join(json.dumps(e) + "\n" for e in lines))
+        v = SessionView("s1")
+        v.poll()
+        self.assertEqual({k: v.main.tests[k] for k in ("passed", "failed", "total", "cmd")},
+                         {"passed": 9, "failed": 2, "total": 11, "cmd": "pytest -q"})
+
+
 class Skills(unittest.TestCase):
     def setUp(self):
         root = Path(tempfile.mkdtemp())
@@ -183,7 +219,7 @@ class Stalls(unittest.TestCase):
         (self.projects / "-repo").mkdir()
         self.fleet = Fleet.__new__(Fleet)
         self.fleet.cfg = {**config.DEFAULTS, "stall_sec": 300}
-        self.fleet.views, self.fleet.agents, self.fleet.runs = {}, {}, {}
+        self.fleet.views, self.fleet.agents, self.fleet.runs, self.fleet.checks = {}, {}, {}, {}
         self.fleet.usage = lambda: {"limited": False}
         self.run = Run.from_plan({"repo": "/tmp/x", "base": "main", "tickets": [{"id": "1", "title": "A"}]})
         self.run.d["status"] = "active"
@@ -278,6 +314,35 @@ class Stalls(unittest.TestCase):
         self.assertEqual(stopped, ["o1"])
         self.assertNotIn(self.run.id, [r["id"] for r in self.fleet.snapshot()["runs"]])
         self.assertNotIn("/tmp/x", self.fleet.git_targets())
+
+
+    def test_a_running_check_shows_under_the_orchestrator_beside_its_ticket(self):
+        import asyncio
+        self.fleet.questions, self.fleet.sudo, self.fleet.summaries, self.fleet.windows = {}, {}, {}, {}
+        self.fleet.listening = set()
+        t = self.run.ticket("1")
+        t["state"] = RUNNING
+        t["session"] = self.session("i4", 30, [entry("user", self.iso(-29), "do it")])
+
+        def lanes():
+            return next(r for r in self.fleet.snapshot()["runs"] if r["id"] == self.run.id)["tree"]["children"]
+
+        async def go():
+            task = asyncio.create_task(self.fleet.run_check(self.run, "tests", "#1 A", "sleep 0.3", "/tmp", ticket="1"))
+            await asyncio.sleep(0.1)
+            seen = lanes()
+            await task
+            failed = await self.fleet.run_check(self.run, "full suite", "main", "echo 'Ran 5 tests in 0.1s'; echo; echo 'FAILED (failures=1)'; exit 3", "/tmp")
+            return seen, failed
+        seen, failed = asyncio.run(go())
+        self.assertEqual([n["kind"] for n in seen], ["implementor", "check"])
+        self.assertEqual((seen[1]["name"], seen[1]["state"], seen[1]["note"]), ("daemon · tests", "run", "running"))
+        self.assertEqual(failed[0], 3)
+        done = {n["name"]: n for n in lanes() if n["kind"] == "check"}
+        self.assertEqual((done["daemon · tests"]["state"], done["daemon · tests"]["note"]), ("done", "green"))
+        self.assertEqual(done["daemon · full suite"]["note"], "red")
+        self.assertIn("exit 3", done["daemon · full suite"]["status"])
+        self.assertEqual(done["daemon · full suite"]["tests"], {"passed": 4, "failed": 1, "skipped": 0, "total": 5})
 
 
 class WakeOrchestrator(Stalls):
