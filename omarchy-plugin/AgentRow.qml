@@ -190,6 +190,7 @@ Item {
       RowLayout {
         id: testLine
         readonly property bool counting: r.live && r.row.kind === "check"
+        readonly property bool knowsTotal: r.row.testExpected > 0 && r.row.testExpected >= r.row.testTotal
         Layout.fillWidth: true
         visible: r.row.testTotal > 0 || testLine.counting
         spacing: Style.space(8)
@@ -220,7 +221,7 @@ Item {
           // "~" when the total is an estimate (pytest -q only prints percentages)
           text: !testLine.counting
               ? "of " + r.row.testTotal + " tests" + (r.row.kind !== "check" && r.row.testCmd !== "" ? " · " + r.row.testCmd : "")
-              : r.row.testExpected > 0
+              : testLine.knowsTotal
                 ? "· " + r.row.testTotal + " of " + (r.row.testEstimated ? "~" : "") + r.row.testExpected + " tests done ("
                   + Math.floor(100 * r.row.testTotal / r.row.testExpected) + "%)"
                 : "· " + r.row.testTotal + " tests done so far"
@@ -233,7 +234,7 @@ Item {
       // progress against what the runner said it would run: passed, failed and skipped in their colors
       Rectangle {
         id: testBar
-        visible: testLine.counting && r.row.testExpected > 0
+        visible: testLine.counting && testLine.knowsTotal
         Layout.fillWidth: true
         Layout.preferredHeight: Style.space(4)
         Layout.topMargin: Style.space(1)
