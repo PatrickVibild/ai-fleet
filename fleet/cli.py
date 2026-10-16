@@ -7,9 +7,7 @@ import sys
 import time
 
 from . import paths
-
-JUDGMENT = {"question", "verdict_needed", "attention", "held", "conflict", "run_done", "green_again",
-            "verdict_timeout", "aborted", "run_started", "final_check", "command_missing"}
+from .runs import JUDGMENT
 
 
 def call(req, timeout=None):
@@ -84,7 +82,7 @@ def cmd_events(a):
                         break
                     pos += len(line.encode())
                     ev = json.loads(line)
-                    if a.all or ev["type"] in JUDGMENT:
+                    if (a.all or ev["type"] in JUDGMENT) and ev["ts"] > a.since:
                         print(json.dumps(ev), flush=True)
         except FileNotFoundError:
             pass
@@ -182,6 +180,7 @@ def main():
     s.add_argument("run")
     s.add_argument("--follow", "-f", action="store_true")
     s.add_argument("--all", action="store_true", help="include routine events too")
+    s.add_argument("--since", type=float, default=0, help="only events after this unix time")
     s = sub.add_parser("answer", help="answer an implementor's question")
     s.add_argument("qid")
     s.add_argument("answer", nargs="?", default="")

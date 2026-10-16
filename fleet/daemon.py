@@ -18,6 +18,9 @@ import uuid
 from . import claude, config, git, memory, paths, skills
 from .runs import (ATTN, CONFLICT, KILLED, LIVE_RUN, MERGED, MERGING, READY, REVIEW, RUNNING, TESTING, WAIT,
                    Run, slug)
+
+WAKE_GRACE_SEC = 30      # an orchestrator gets this long to start following after an event before we wake it
+WAKE_EVERY_SEC = 600     # and isn't woken more often than this
 from .transcripts import LIMIT_TEXT, SessionView, describe, trunc
 
 TAIL = 3500
@@ -92,6 +95,8 @@ class Fleet:
         self.sudo = {}           # request id -> {..., future}
         self.last_state = ""
         self.last_view = 0.0     # when the panel last said someone is looking
+        self.listening = set()   # run ids some `fleet events <run> --follow` is following right now
+        self.heard = {}          # run id -> when we last saw its orchestrator following it
         try:
             self.windows = json.loads(paths.MODEL_WINDOWS.read_text())
         except (OSError, json.JSONDecodeError):
@@ -209,8 +214,31 @@ class Fleet:
         return None, None, None
 
     def orchestrator_alive(self, run):
-        a = self.agents.get(run.d.get("orchestrator") or "")
-        return alive(a)
+        """Whether the run has an orchestrator that is following it, or that we can wake to (its transcript is
+        there to resume). Being alive isn't enough: an idle session whose Monitor expired hears nothing."""
+        sid = run.d.get("orchestrator")
+        if not sid:
+            return False
+        v = self.views.get(sid)
+        return run.id in self.listening or alive(self.agents.get(sid)) or bool(v and v.main)
+
+    @staticmethod
+    def listeners():
+        """Run ids (or prefixes) that a `fleet events <run> --follow` process is following."""
+        out = set()
+        for p in os.listdir("/proc"):
+            if not p.isdigit():
+                continue
+            try:
+                with open(f"/proc/{p}/cmdline", "rb") as f:
+                    argv = f.read().decode(errors="replace").split("\0")
+            except OSError:
+                continue
+            if "events" in argv and ("--follow" in argv or "-f" in argv):
+                i = argv.index("events")
+                if i + 1 < len(argv) and argv[i - 1].endswith("fleet"):
+                    out.add(argv[i + 1])
+        return out
 
     async def session_for_pid(self, pid):
         agents = await claude.agents()
@@ -890,8 +918,14 @@ class Fleet:
                 real = by_short.get(s.get("short"))
                 if real and s.get("sessionId") != real:
                     s["sessionId"], changed = real, True
+            real = by_short.get(r.d.get("orchestratorShort"))
+            if real and r.d.get("orchestrator") != real:   # a resumed orchestrator may come back under a new id
+                r.d["orchestrator"], changed = real, True
             if changed:
                 r.save()
+        for q in self.questions.values():   # a question nobody on the orchestrator side picked up goes to you
+            if q.state == "orchestrator" and time.time() - q.created > self.cfg["verdict_timeout_sec"]:
+                q.state, q.why = "user", f"The orchestrator didn't take it within {self.cfg['verdict_timeout_sec'] // 60} min."
         wanted = set()
         for r in self.runs.values():
             if r.d["status"] in ("done", "aborted") and time.time() - r.d.get("created", 0) > 86400:
@@ -921,6 +955,65 @@ class Fleet:
                 if t["state"] == RUNNING and a and not alive(a) and time.time() - s.get("started", 0) > 60:
                     self.escalate(r, t, "session_ended", "The implementor's session ended before the ticket was done.")
         self.check_stalls()
+        await self.check_orchestrators()
+
+    async def check_orchestrators(self):
+        """Wake an orchestrator that missed events: its Monitor expired, or it ended its turn (a usage limit)."""
+        prefixes = self.listeners()
+        now = time.time()
+        for r in self.runs.values():
+            if any(len(x) >= 4 and r.id.startswith(x) for x in prefixes):
+                self.listening.add(r.id)
+                self.heard[r.id] = now
+                continue
+            self.listening.discard(r.id)
+            sid = r.d.get("orchestrator")
+            if r.d["status"] not in LIVE_RUN or not sid or self.usage()["limited"]:
+                continue
+            missed = r.last_judgment()
+            if missed <= self.heard.get(r.id, 0) or now - missed < WAKE_GRACE_SEC \
+                    or now - r.d.get("orchWokenAt", 0) < WAKE_EVERY_SEC:
+                continue
+            if (self.agents.get(sid) or {}).get("status") == "busy":
+                continue   # mid-turn; it may be re-arming right now
+            await self.wake_orchestrator(r, self.heard.get(r.id) or r.d.get("orchWokenAt") or r.d["created"])
+
+    async def wake_orchestrator(self, run, since):
+        sid = run.d["orchestrator"]
+        a = self.agents.get(sid) or {}
+        v = self.views.get(sid)
+        main = v.main if v else None
+        if not alive(a) and not main:
+            return
+        run.d["orchWokenAt"] = time.time()
+        run.save()
+        if alive(a) and a.get("kind") != "background":   # your own terminal: don't take it over, tell you instead
+            run.event("orchestrator_not_following", session=a.get("id"))
+            notify(f"{run.d['name']}: orchestrator not following",
+                   f"It missed events. Tell it in its terminal: keep following run {run.id}")
+            return
+        note = (f"ai-fleet: nothing is following run {run.id}, and it has events since "
+                f"{time.strftime('%H:%M', time.localtime(since))} that you haven't handled. Read them with "
+                f"`fleet events {run.id} --since {since:.0f}` and handle each as the implement-orchestrator skill says. "
+                f"Then follow the run again with the Monitor tool on `fleet events {run.id} --follow --since "
+                f"{time.time():.0f}`, re-arming it whenever it expires, until `run_done` or `aborted`.")
+        settings = paths.STATE / "manual-settings.json"
+        settings.write_text(json.dumps({"statusLine": {"type": "command", "command": str(paths.STATUSLINE_HOOK), "padding": 0}}))
+        if alive(a):
+            await claude.stop(a.get("id") or sid[:8])
+        try:
+            short = await claude.spawn_bg(cwd=a.get("cwd") or (main.workdir if main else None) or run.d["repo"],
+                                          prompt=note, resume=sid, name=a.get("name") or f"{run.d['name']} orchestrator",
+                                          settings=settings, permission_mode=(main.permission_mode if main else None)
+                                          or self.cfg["permission_mode"])
+        except RuntimeError as e:
+            run.event("orchestrator_wake_failed", detail=str(e))
+            notify(f"{run.d['name']}: orchestrator not following", f"Couldn't wake it: {e}")
+            return
+        run.d["orchestratorShort"] = short
+        self.heard[run.id] = time.time()
+        run.event("orchestrator_woken", session=short, since=since)
+        run.save()
 
     def stalled(self, s):
         """Why a fleet session that should be working isn't, or None. A session that never got past an unknown slash
@@ -1137,6 +1230,8 @@ class Fleet:
                     (r.d.get("held") or {}).get("reason") or f"{sum(t['state'] == MERGED for t in r.tickets.values())}"
                                                              f"/{len(r.tickets)} merged")
                 tree["note"], tree["endedAt"] = "no orchestrator", None
+            elif orch and r.d["status"] in LIVE_RUN and r.id not in self.listening:
+                tree["note"] = "not following"
             runs_out.append({"id": r.id, "name": r.d["name"], "repo": r.d["repo"], "base": r.d["base"],
                              "status": r.d["status"], "held": r.d.get("held"), "problem": r.d.get("problem"),
                              "finalCheck": r.d.get("finalCheck"), "finalCheckAt": r.d.get("finalCheckAt"),
