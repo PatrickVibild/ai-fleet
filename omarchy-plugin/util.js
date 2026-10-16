@@ -7,6 +7,12 @@ function fmtTokens(v) {
   return String(Math.round(v))
 }
 
+// A test count that fits the TESTS column: exact below 10k, then "12.3k"
+function fmtCount(v) {
+  v = Number(v) || 0
+  return v >= 10000 ? (v / 1000).toFixed(1) + "k" : String(v)
+}
+
 // Context used, compact: "86k", "345k", "1.0M"
 function fmtCtx(v) {
   v = Number(v) || 0

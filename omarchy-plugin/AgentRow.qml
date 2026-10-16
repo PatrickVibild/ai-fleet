@@ -186,68 +186,6 @@ Item {
         maximumLineCount: 2
         elide: Text.ElideRight
       }
-      // the latest test run's counts: the daemon's own check (live while it runs), or the last test command the agent ran
-      RowLayout {
-        id: testLine
-        readonly property bool counting: r.live && r.row.kind === "check"
-        readonly property bool knowsTotal: r.row.testExpected > 0 && r.row.testExpected >= r.row.testTotal
-        Layout.fillWidth: true
-        visible: r.row.testTotal > 0 || testLine.counting
-        spacing: Style.space(8)
-        Text {
-          text: "✓ " + r.row.testPassed + " passed"
-          color: r.fleet.green
-          font.family: r.view.fontFamily
-          font.pixelSize: Style.font.bodySmall
-        }
-        Text {
-          visible: r.row.testFailed > 0
-          text: "✗ " + r.row.testFailed + " failed"
-          color: r.fleet.red
-          font.family: r.view.fontFamily
-          font.pixelSize: Style.font.bodySmall
-          font.bold: true
-        }
-        Text {
-          visible: r.row.testSkipped > 0
-          text: r.row.testSkipped + " skipped"
-          color: r.view.dim
-          font.family: r.view.fontFamily
-          font.pixelSize: Style.font.bodySmall
-        }
-        Text {
-          Layout.fillWidth: true
-          Layout.minimumWidth: 0
-          // "~" when the total is an estimate (pytest -q only prints percentages)
-          text: !testLine.counting
-              ? "of " + r.row.testTotal + " tests" + (r.row.kind !== "check" && r.row.testCmd !== "" ? " · " + r.row.testCmd : "")
-              : testLine.knowsTotal
-                ? "· " + r.row.testTotal + " of " + (r.row.testEstimated ? "~" : "") + r.row.testExpected + " tests done ("
-                  + Math.floor(100 * r.row.testTotal / r.row.testExpected) + "%)"
-                : "· " + r.row.testTotal + " tests done so far"
-          elide: Text.ElideRight
-          color: r.view.dim
-          font.family: r.view.fontFamily
-          font.pixelSize: Style.font.bodySmall
-        }
-      }
-      // progress against what the runner said it would run: passed, failed and skipped in their colors
-      Rectangle {
-        id: testBar
-        visible: testLine.counting && testLine.knowsTotal
-        Layout.fillWidth: true
-        Layout.preferredHeight: Style.space(4)
-        Layout.topMargin: Style.space(1)
-        radius: height / 2
-        color: Qt.rgba(r.view.fg.r, r.view.fg.g, r.view.fg.b, 0.12)
-        readonly property real unit: r.row.testExpected > 0 ? width / Math.max(r.row.testExpected, r.row.testTotal) : 0
-        Row {
-          height: parent.height
-          Rectangle { width: r.row.testPassed * testBar.unit; height: parent.height; color: r.fleet.green }
-          Rectangle { width: r.row.testFailed * testBar.unit; height: parent.height; color: r.fleet.red }
-          Rectangle { width: r.row.testSkipped * testBar.unit; height: parent.height; color: r.view.dim }
-        }
-      }
       // your own session in a git repo, once it stops working: is the work merged, and is it pushed?
       GitTicks {
         Layout.fillWidth: true
@@ -328,14 +266,87 @@ Item {
       font.pixelSize: Style.font.body
     }
 
+    // TESTS: the latest run's passed and failed, live while a daemon check runs (the last test command an agent
+    // ran otherwise). A row's actions take this column over while it's hovered.
     Item {
+      id: lastCol
+      readonly property bool counting: r.live && r.row.kind === "check"
+      readonly property bool knowsTotal: r.row.testExpected > 0 && r.row.testExpected >= r.row.testTotal
+      readonly property bool hasTests: r.row.testTotal > 0 || counting
+      readonly property bool hasActions: U.canOpen(r.row)
+          || (r.row.kind === "implementor" && (r.row.state === "killed" || r.row.state === "attn"))
+      readonly property bool showActions: r.confirming || (r.hot && hasActions)
       Layout.preferredWidth: Style.space(96)
-      Layout.preferredHeight: Style.space(22)
+      Layout.preferredHeight: tests.visible ? tests.implicitHeight : Style.space(22)
       Layout.alignment: Qt.AlignTop
+
+      ColumnLayout {
+        id: tests
+        width: parent.width
+        visible: lastCol.hasTests && !lastCol.showActions
+        spacing: Style.space(2)
+        Row {
+          Layout.alignment: Qt.AlignRight
+          spacing: Style.space(6)
+          Text {
+            text: "✓ " + U.fmtCount(r.row.testPassed)
+            color: r.fleet.green
+            font.family: r.view.fontFamily
+            font.pixelSize: Style.font.body
+          }
+          Text {
+            visible: r.row.testFailed > 0
+            text: "✗ " + U.fmtCount(r.row.testFailed)
+            color: r.fleet.red
+            font.family: r.view.fontFamily
+            font.pixelSize: Style.font.body
+            font.bold: true
+          }
+        }
+        Text {
+          Layout.alignment: Qt.AlignRight
+          // "~" when the total is an estimate (pytest -q only prints percentages)
+          text: !lastCol.counting ? "of " + r.row.testTotal
+              : lastCol.knowsTotal ? Math.floor(100 * r.row.testTotal / r.row.testExpected) + "% of "
+                                     + (r.row.testEstimated ? "~" : "") + r.row.testExpected
+              : r.row.testTotal + " run"
+          color: r.view.dim
+          font.family: r.view.fontFamily
+          font.pixelSize: Style.font.caption
+        }
+        // progress against what the runner said it would run: passed, failed and skipped in their colors
+        Rectangle {
+          id: testBar
+          visible: lastCol.counting && lastCol.knowsTotal
+          Layout.fillWidth: true
+          Layout.preferredHeight: Style.space(3)
+          radius: height / 2
+          clip: true
+          color: Qt.rgba(r.view.fg.r, r.view.fg.g, r.view.fg.b, 0.12)
+          readonly property real unit: width / Math.max(1, r.row.testExpected, r.row.testTotal)
+          Row {
+            height: parent.height
+            Rectangle { width: r.row.testPassed * testBar.unit; height: parent.height; color: r.fleet.green }
+            Rectangle { width: r.row.testFailed * testBar.unit; height: parent.height; color: r.fleet.red }
+            Rectangle { width: r.row.testSkipped * testBar.unit; height: parent.height; color: r.view.dim }
+          }
+        }
+        HoverHandler { id: testsHover }
+        PanelToolTip {
+          visible: testsHover.hovered
+          text: r.row.testPassed + " passed · " + r.row.testFailed + " failed · " + r.row.testSkipped + " skipped"
+              + (lastCol.counting ? "\n" + r.row.testTotal + " done so far"
+                                    + (lastCol.knowsTotal ? " of " + (r.row.testEstimated ? "about " : "") + r.row.testExpected : "")
+                                  : "\n" + r.row.testTotal + " in all")
+              + (r.row.testCmd !== "" ? "\n" + r.row.testCmd : "")
+          fontFamily: r.view.fontFamily
+        }
+      }
+
       Row {
         anchors.right: parent.right
         spacing: Style.space(2)
-        visible: r.hot && !r.confirming
+        visible: lastCol.showActions && !r.confirming
         PanelActionButton {
           visible: r.row.kind === "implementor" && (r.row.state === "killed" || r.row.state === "attn")
           iconText: "󰑓"; tooltipText: "Retry (r)"; foreground: r.view.dim; hoverColor: r.view.fg
