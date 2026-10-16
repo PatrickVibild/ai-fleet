@@ -323,6 +323,12 @@ class LiveUsage(unittest.TestCase):
         self.assertEqual(f.usage()["five_hour"]["used"], 96)
         f.live_usage, f._usage_at = (time.time(), {"five_hour": {"used": 0, "resetsAt": later}}), 0
         self.assertEqual(f.usage()["five_hour"]["used"], 0)
+        # a session that hit the old limit doesn't keep the account limited once Anthropic says it isn't
+        v = SessionView("x")
+        v.main = type("T", (), {"limited": (0, "You've hit your limit")})()
+        f.views, f._usage_at = {"x": v}, 0
+        self.assertFalse(f.usage()["limited"])
+        f.views = {}
         f.live_usage, f._usage_at = (time.time() - 3600, {"five_hour": {"used": 0, "resetsAt": later}}), 0
         self.assertEqual(f.usage()["five_hour"]["used"], 96)   # too old: back to the statusline
 

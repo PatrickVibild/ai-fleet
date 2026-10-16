@@ -841,7 +841,7 @@ class Fleet:
             if pct is not None and pct >= 100:
                 until = max(until or 0, reset or 0) or None
         hit = [v.main.limited for v in self.views.values() if v.main and v.main.limited]
-        if hit and not until:   # a session hit it; the statusline may not have caught up
+        if hit and not until and not live:   # a session hit it; the statusline may not have caught up
             until = windows["five_hour"]["resetsAt"] if (windows["five_hour"]["resetsAt"] or 0) > now else None
         limited = bool(until and until > now) or (bool(hit) and until is None and not rl)
         self._usage_at, self._usage = now, {**windows, "limited": limited, "until": until if limited else None,
