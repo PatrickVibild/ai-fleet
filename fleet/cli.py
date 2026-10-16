@@ -238,6 +238,8 @@ def main():
     s.add_argument("id")
     s.add_argument("--deny", action="store_true")
     sub.add_parser("viewing", help="tell the daemon the panel is open (AI summaries only run then)")
+    s = sub.add_parser("mock", help="show a made-up run on the panel, to look at it without spending agents")
+    s.add_argument("state", choices=["on", "off"])
     s = sub.add_parser("askpass")
     s.add_argument("prompt", nargs="*")
     a = p.parse_args()
@@ -269,6 +271,9 @@ def main():
         cmd_cc(a)
     elif a.cmd == "sudo-answer":
         cmd_sudo_answer(a)
+    elif a.cmd == "mock":
+        on = call({"op": "mock", "on": a.state == "on"})["on"]
+        print("docs-diet (mock) is on the panel; `fleet mock off` takes it away." if on else "Mock run off.")
     elif a.cmd == "viewing":
         call({"op": "viewing"}, timeout=5)
     elif a.cmd == "askpass":
