@@ -248,6 +248,62 @@ class Stalls(unittest.TestCase):
         self.assertIn("fixer is on it", tree["status"])
 
 
+class WakeOrchestrator(Stalls):
+    """An orchestrator that stopped following its run is resumed when an event it should see arrives."""
+
+    def setUp(self):
+        super().setUp()
+        import asyncio
+        from fleet import claude
+        self.asyncio = asyncio
+        self.fleet.listening, self.fleet.heard = set(), {}
+        self.spawned, self.stopped = [], []
+
+        async def spawn_bg(**kw):
+            self.spawned.append(kw)
+            return "newshort"
+
+        async def stop(short):
+            self.stopped.append(short)
+        for name, fn in (("spawn_bg", spawn_bg), ("stop", stop)):
+            self.addCleanup(setattr, claude, name, getattr(claude, name))
+            setattr(claude, name, fn)
+        from fleet import daemon
+        self.addCleanup(setattr, daemon, "notify", daemon.notify)
+        daemon.notify = lambda *a, **kw: None
+        self.run.d["orchestrator"] = "o1"
+        self.session("o1", 900, [entry("assistant", self.iso(-800), [{"type": "text", "text": "stopping"}], id="o")])
+        self.fleet.agents["o1"] = {"sessionId": "o1", "pid": 9, "id": "o1", "kind": "background", "status": "idle"}
+
+    def check(self, followers):
+        self.fleet.listeners = lambda: set(followers)
+        self.asyncio.run(self.fleet.check_orchestrators())
+
+    def test_wakes_an_idle_orchestrator_that_missed_an_event(self):
+        self.run.event("held", reason="red")
+        self.run._last_judgment -= 60
+        self.check([])
+        self.assertEqual(self.stopped, ["o1"])
+        self.assertEqual(self.spawned[0]["resume"], "o1")
+        self.assertIn(f"fleet events {self.run.id} --since", self.spawned[0]["prompt"])
+        self.check([])   # not again right away
+        self.assertEqual(len(self.spawned), 1)
+
+    def test_leaves_a_following_orchestrator_alone(self):
+        self.run.event("held", reason="red")
+        self.run._last_judgment -= 60
+        self.check([self.run.id[:10]])
+        self.assertEqual(self.spawned, [])
+        self.assertIn(self.run.id, self.fleet.listening)
+
+    def test_never_takes_over_your_terminal(self):
+        self.fleet.agents["o1"]["kind"] = "interactive"
+        self.run.event("held", reason="red")
+        self.run._last_judgment -= 60
+        self.check([])
+        self.assertEqual((self.spawned, self.stopped), ([], []))
+
+
 class ClaudeMd(unittest.TestCase):
     def test_counts_user_file_and_files_up_to_the_git_root_not_beyond(self):
         root = Path(tempfile.mkdtemp())

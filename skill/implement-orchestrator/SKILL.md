@@ -35,6 +35,8 @@ Done when the daemon has accepted the run.
 
 Watch `fleet events <run> --follow` with the Monitor tool; every line is one event that needs you or that the user should hear about. Keep each reply to the user to a line or two: the panel already shows the detail.
 
+Keep following until `run_done` or `aborted`. When the Monitor expires, re-arm it at once, with `--since <unix time of the last event you handled>` so old events don't repeat. Never stop following because of a usage-limit warning or a quiet stretch: the run goes on without you, and the daemon only waits so long for your verdicts. If the daemon finds nobody following, it resumes you with a message starting `ai-fleet:`; do what it says.
+
 ### `question`: an implementor asked something
 
 Look for the answer in the **sources**: the ticket, its spec (`spec.md` beside local tickets, or the parent issue), `CONTEXT.md`, the ADRs, and the code itself.

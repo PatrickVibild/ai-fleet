@@ -11,6 +11,9 @@ WAIT, RUNNING, TESTING, REVIEW, ATTN, READY, MERGING, CONFLICT, MERGED, KILLED =
     "wait", "running", "testing", "review", "attn", "ready", "merging", "conflict", "merged", "killed")
 HOLDS_SLOT = {RUNNING, TESTING, REVIEW}
 LIVE_RUN = {"active", "paused"}
+# Events the orchestrator acts on or reports; `fleet events` shows only these unless asked for all.
+JUDGMENT = {"question", "verdict_needed", "attention", "held", "conflict", "run_done", "green_again",
+            "verdict_timeout", "aborted", "run_started", "final_check", "command_missing"}
 
 
 def slug(s):
@@ -20,6 +23,7 @@ def slug(s):
 class Run:
     def __init__(self, d: dict):
         self.d = d
+        self._last_judgment = None
 
     # -- construction ---------------------------------------------------------
     @classmethod
@@ -91,7 +95,22 @@ class Run:
         ev = {"ts": time.time(), "run": self.id, "type": type_, **kw}
         with open(self.dir / "events.jsonl", "a") as f:
             f.write(json.dumps(ev) + "\n")
+        if type_ in JUDGMENT:
+            self._last_judgment = ev["ts"]
         return ev
+
+    def last_judgment(self):
+        """When the latest event the orchestrator should see was written (0 if none)."""
+        if self._last_judgment is None:
+            self._last_judgment = 0
+            try:
+                for line in (self.dir / "events.jsonl").read_text().splitlines():
+                    ev = json.loads(line)
+                    if ev.get("type") in JUDGMENT:
+                        self._last_judgment = ev["ts"]
+            except (OSError, json.JSONDecodeError):
+                pass
+        return self._last_judgment
 
     # -- graph ----------------------------------------------------------------
     @property
