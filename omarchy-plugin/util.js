@@ -153,9 +153,22 @@ function mdFiles(md, size) {
   return lines.join("\n") + "\n= " + fmtTokens(md.tokens) + (size ? ", " + (md.tokens / size * 100).toFixed(1) + "% of the window" : "")
 }
 
+// The daemon's git status (fleet/git.py status(), plus the last push) as flat fields for a ListModel row.
+// Runs pass the same object to GitTicks directly.
+function gitFields(g) {
+  g = g || {}
+  var p = g.push || {}
+  return {
+    gitPath: g.path || "", gitBranch: g.branch || "", gitBase: g.base || "", gitMerged: !!g.merged,
+    gitDirty: g.dirty || 0, gitRemote: g.remote || "", gitUnpushed: g.unpushed || 0, gitPushed: !!g.pushed,
+    gitTarget: g.target || "", gitPushState: p.state || "", gitPushKind: p.kind || "", gitPushMsg: p.msg || ""
+  }
+}
+
 function rowFor(n, depth, extra) {
   var c = n.ctx || {}
   var md = n.claudeMd || {}
+  var g = gitFields(n.git)
   var r = {
     key: n.id, depth: depth, kind: n.kind || "", name: n.name || "", tag: n.tag || "", label: n.label || "",
     state: n.state || "", status: n.status || "", summary: n.summary || "", note: n.note || "",
@@ -163,8 +176,9 @@ function rowFor(n, depth, extra) {
     mdTokens: md.tokens || 0, mdFiles: mdFiles(md, c.size),
     startedAt: n.startedAt || 0, endedAt: n.endedAt || 0, short: n.short || "", ticket: n.ticket || "",
     waitingFor: n.waitingFor || "", hasKids: (n.children || []).length > 0, expanded: false,
-    runId: "", lane: "", laneFirst: false, laneLast: false
+    runId: "", lane: "", laneFirst: false, laneLast: false, activity: n.activity || ""
   }
+  for (var f in g) r[f] = g[f]
   for (var k in extra) r[k] = extra[k]
   return r
 }

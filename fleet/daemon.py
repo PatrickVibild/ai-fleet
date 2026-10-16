@@ -99,6 +99,8 @@ class Fleet:
         self.live_tried = 0.0
         self.listening = set()   # run ids some `fleet events <run> --follow` is following right now
         self.heard = {}          # run id -> when we last saw its orchestrator following it
+        self.gitinfo = {}        # checkout path -> git.status() of a finished run's repo or a session's cwd
+        self.pushes = {}         # checkout path -> the last push from the panel: {state, kind, msg, at}
         try:
             self.windows = json.loads(paths.MODEL_WINDOWS.read_text())
         except (OSError, json.JSONDecodeError):
@@ -117,7 +119,7 @@ class Fleet:
         server = await asyncio.start_unix_server(self._client, path=str(paths.SOCK))
         os.chmod(paths.SOCK, 0o600)
         loops = [self._every(2, self.poll), self._every(2, self.schedule), self._every(1, self.write_state),
-                 self._every(5, self.summarize), self._every(5, self.refresh_usage)]
+                 self._every(5, self.summarize), self._every(5, self.refresh_usage), self._every(5, self.refresh_git)]
         async with server:
             await asyncio.gather(server.serve_forever(), *loops)
 
@@ -614,7 +616,7 @@ class Fleet:
             run.save()
             notify(f"{run.d['name']}: run done",
                    f"All {len(run.tickets)} tickets merged and the full suite is green on {run.d['base']}. "
-                   f"Nothing was pushed.", urgent=False)
+                   f"Not pushed yet; push it from the Fleet panel.", urgent=False)
         else:
             run.d["finalCheck"] = "red"
             self.hold(run, f"The full suite fails on `{run.d['base']}`. A fixer is on it.")
@@ -730,6 +732,8 @@ class Fleet:
             return {}
         if a == "continue":
             return await self.continue_limited(req.get("note"))
+        if a == "push":
+            return await self.push(req["path"])
         run = self._run(req["run"])
         if a == "pause":
             run.d["status"] = "paused"
@@ -899,6 +903,66 @@ class Fleet:
                 h["state"] = "killed"
         run.d["status"] = "aborted"
         run.event("aborted")
+
+    # ------------------------------------------------------------------ git: merged and pushed
+    def git_targets(self):
+        """Checkouts the panel shows merged/pushed ticks for: each finished run's repo (on its base branch) and the
+        working directory of each of your own sessions. path -> base branch (None: the repo's default branch)."""
+        out = {}
+        for r in self.runs.values():
+            if r.d["status"] == "done" and time.time() - r.d.get("created", 0) <= 6 * 3600:
+                out[r.d["repo"]] = r.d["base"]
+        fleet = {r.d.get("orchestrator") for r in self.runs.values()} \
+            | {s.get("sessionId") for r in self.runs.values() for s in r.sessions()}
+        for sid, a in self.agents.items():
+            cwd = a.get("cwd")
+            if sid not in fleet and alive(a) and cwd and not str(cwd).startswith(str(paths.STATE)):
+                out.setdefault(cwd, None)
+        return out
+
+    async def refresh_git(self):
+        targets = self.git_targets()
+        for path, base in targets.items():
+            if (self.pushes.get(path) or {}).get("state") == "running":
+                continue
+            info = self.gitinfo[path] = await git.status(path, base) if os.path.isdir(path) else None
+            if info and info["pushed"] and (self.pushes.get(path) or {}).get("state") == "failed":
+                del self.pushes[path]   # pushed some other way since
+        for d in (self.gitinfo, self.pushes):
+            for p in [p for p in d if p not in targets]:
+                del d[p]
+
+    async def push(self, path):
+        """Push a finished run's base branch, or a session's work (its base branch once merged, else its branch).
+        On failure the reason stays on the row until a push goes through."""
+        targets = self.git_targets()
+        path = next((p for p in targets if os.path.realpath(p) == os.path.realpath(path)), path)
+        if path not in targets:
+            raise ValueError(f"{path} isn't a finished run or one of your sessions")
+        info = await git.status(path, targets[path])
+        if not info:
+            raise ValueError(f"{path} isn't a git repository with commits")
+        if info["pushed"]:
+            self.gitinfo[path] = info
+            return {"msg": f"Already pushed to {info['remote']}."}
+        self.pushes[path] = {"state": "running", "target": info["target"], "remote": info["remote"], "at": time.time()}
+        try:
+            ok, kind, msg, out = await git.push(path, info)
+        except Exception as e:   # never leave the row saying "pushing…"
+            ok, kind, msg, out = False, "other", f"git push crashed: {type(e).__name__}: {e}", ""
+        self.pushes[path] = {"state": "ok" if ok else "failed", "kind": kind, "msg": msg, "output": tail(out, 1500),
+                             "target": info["target"], "remote": info["remote"], "at": time.time()}
+        self.gitinfo[path] = await git.status(path, targets[path])
+        for r in self.runs.values():
+            if r.d["repo"] == path and r.d["status"] == "done":
+                r.event("pushed" if ok else "push_failed", target=info["target"], remote=info["remote"], kind=kind, msg=msg)
+        if not ok:
+            raise ValueError(msg)
+        return {"msg": msg}
+
+    def git_view(self, path):
+        info = self.gitinfo.get(path)
+        return {**info, "push": self.pushes.get(path)} if info else None
 
     # ------------------------------------------------------------------ sudo (askpass through the panel)
     async def sudo_request(self, req, pid):
@@ -1250,12 +1314,15 @@ class Fleet:
                 tree["note"], tree["endedAt"] = "no orchestrator", None
             elif orch and r.d["status"] in LIVE_RUN and r.id not in self.listening:
                 tree["note"] = "not following"
+            elif r.d["status"] == "done" and tree.get("activity") != "working":
+                tree["state"] = "done"   # the run is finished even if its session sits idle afterwards
             runs_out.append({"id": r.id, "name": r.d["name"], "repo": r.d["repo"], "base": r.d["base"],
                              "status": r.d["status"], "held": r.d.get("held"), "problem": r.d.get("problem"),
                              "finalCheck": r.d.get("finalCheck"), "finalCheckAt": r.d.get("finalCheckAt"),
                              "finalCmd": (r.d["checks"] or {}).get("full") or (r.d["checks"] or {}).get("test") or "",
                              "slots": {"used": r.slots_used(), "max": self.cfg["implementors_per_orchestrator"]},
-                             "tickets": tickets, "tree": tree})
+                             "tickets": tickets, "tree": tree,
+                             "git": self.git_view(r.d["repo"]) if r.d["status"] == "done" else None})
             for t in r.tickets.values():
                 at = t.get("attn") or {}
                 if t["state"] == ATTN and at.get("kind") != "question":
@@ -1286,7 +1353,8 @@ class Fleet:
             if sid in fleet_sids or not alive(a) or str(a.get("cwd", "")).startswith(str(paths.STATE)):
                 continue
             cwd = str(a.get("cwd", "")).replace(str(paths.HOME), "~", 1)
-            sessions.append(self.session_node(sid, "session", "claude", cwd, extra={"label": a.get("name")}))
+            sessions.append(self.session_node(sid, "session", "claude", cwd,
+                                              extra={"label": a.get("name"), "git": self.git_view(a.get("cwd"))}))
         for n in [*(r.get("tree") for r in runs_out if r.get("tree")), *sessions]:
             self._collect_permission(n, attention)
         return {"updated": time.time(), "daemon": os.getpid(),

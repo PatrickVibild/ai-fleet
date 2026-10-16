@@ -20,6 +20,15 @@ no new tickets start, and a banner shows up. Once the limit resets, click **▶ 
 run `fleet continue`). This resumes every background session the limit stopped. Interactive sessions can't be
 resumed this way, so type `continue` in their terminal.
 
+## Merged and pushed
+
+A finished run, and each of your own sessions that's in a git repo and not working right now, shows two ticks:
+**merged** into the base branch (the remote's default branch for a session), and **pushed**, meaning every
+commit is on a remote. Until it's pushed, the second tick is a button (or run `fleet push <path>`). It pushes
+the base branch once the work is merged into it, otherwise the session's own branch. If the push fails, the
+reason shows under the row: no remote yet, the remote repo doesn't exist, no write access, an unknown SSH host
+key, a protected branch, the remote is ahead (pull first), or the network.
+
 ## Install
 
     ./install.sh            # links everything into place and starts the daemon

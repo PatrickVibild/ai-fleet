@@ -63,7 +63,7 @@ Read `last_message`. A question or a blocker the sources settle: `fix` with the 
 - `command_missing`: the configured `implement_command` or `merge_command` is no longer installed (a plugin update dropped it). Sessions now get plain instructions instead. Tell the user in one line, quoting `detail`.
 - `attention`: relay it in one line (the panel has the buttons). Kind `stalled` (or a `merge_failed` whose message says the merger never started or hasn't replied) means the session sits idle: say so, and that they can open it or retry.
 - `held`, `conflict`, `green_again`, `verdict_timeout`: one line each, or none if nothing changed for the user.
-- `run_done`: report tickets merged and any kept worktrees, say that nothing was pushed, and stop watching. You're done.
+- `run_done`: report tickets merged and any kept worktrees, and stop watching. You're done. Don't push yourself: the Fleet panel shows whether the base branch is pushed and pushes it on a click (or `fleet push <repo>`), and says why if the push fails.
 - `aborted`: confirm, and stop watching.
 
 If the user asks about the run, `fleet status` is the truth.
