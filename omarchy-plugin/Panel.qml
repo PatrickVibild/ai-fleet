@@ -134,6 +134,12 @@ Panel {
     else if (row.short) fleet.run(["stop", row.short], "Stopped " + row.short)
   }
   function retry(row) { if (row.runId && row.ticket) fleet.run(["retry", row.runId, row.ticket], "Retrying #" + row.ticket) }
+  // A failed push toasts the daemon's reason, and GitTicks keeps showing it under the row.
+  function push(path, target, remote) {
+    if (!path) return
+    toast("Pushing " + target + (remote ? " to " + remote : "") + "…", false)
+    fleet.run(["push", path], "Pushed " + target + (remote ? " to " + remote : ""), undefined, "Push failed")
+  }
 
   // ---- toast
   property string toastText: ""

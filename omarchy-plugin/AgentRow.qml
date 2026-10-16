@@ -185,6 +185,14 @@ Item {
         maximumLineCount: 2
         elide: Text.ElideRight
       }
+      // your own session in a git repo, once it stops working: is the work merged, and is it pushed?
+      GitTicks {
+        Layout.fillWidth: true
+        Layout.topMargin: Style.space(2)
+        g: r.row
+        view: r.view
+        visible: r.row.gitPath !== "" && r.row.activity !== "working"
+      }
     }
 
     // column widths are mirrored in ColumnHeader.qml

@@ -136,8 +136,16 @@ ColumnLayout {
   Banner {
     Layout.fillWidth: true
     visible: !!sec.run && sec.run.status === "done"
-    text: "✓  Every ticket is merged and the full suite is green. Nothing was pushed."
+    text: "✓  Every ticket is merged and the full suite is green."
     tone: sec.fleet.green; font: sec.view.fontFamily
+  }
+  GitTicks {
+    Layout.fillWidth: true
+    Layout.leftMargin: Style.space(14)
+    Layout.rightMargin: Style.space(14)
+    g: U.gitFields(sec.run ? sec.run.git : null)
+    view: sec.view
+    visible: !!sec.run && sec.run.status === "done" && !!sec.run.git
   }
   Banner {
     Layout.fillWidth: true

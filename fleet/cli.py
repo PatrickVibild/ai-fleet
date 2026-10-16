@@ -47,6 +47,12 @@ def cmd_status(a):
         print(f"\n{r['id']}  [{r['status']}]  {merged}/{len(r['tickets'])} merged  {r['repo']}")
         if r.get("held"):
             print(f"  held: {r['held']['reason']}")
+        g = r.get("git")
+        if g and g["pushed"]:
+            print(f"  pushed to {g['remote']}")
+        elif g:
+            why = (g.get("push") or {}).get("msg") or (f"{g['unpushed']} commits only here" if g["remote"] else "no remote")
+            print(f"  not pushed: {why}  (fleet push {r['repo']})")
         if r.get("finalCheck") in ("running", "cleanup") and r["status"] == "active":
             mins = int((time.time() - (r.get("finalCheckAt") or time.time())) // 60)
             print(f"  every ticket merged; final check running for {mins} min: {r.get('finalCmd') or '(none)'}"
@@ -121,6 +127,11 @@ def cmd_continue(a):
     print(f"resumed {len(r['resumed'])}: {' '.join(r['resumed']) or '-'}")
     for x in r["skipped"]:
         print(f"skipped {x}")
+
+
+def cmd_push(a):
+    r = call({"op": "ctl", "action": "push", "path": os.path.realpath(os.path.expanduser(a.path))}, timeout=300)
+    print(r["msg"])
 
 
 def cmd_limits(a):
@@ -209,6 +220,8 @@ def main():
     s.add_argument("note")
     for name in ("open", "stop"):
         sub.add_parser(name, help=f"{name} a session by short id").add_argument("session")
+    s = sub.add_parser("push", help="push a finished run's repo, or a session's work, to its remote")
+    s.add_argument("path", help="the run's repo or the session's working directory")
     s = sub.add_parser("continue", help="resume every agent the usage limit stopped")
     s.add_argument("--note", help="the message sent to each agent (default: carry on where you left off)")
     s = sub.add_parser("limits", help="show or change the limits")
@@ -247,6 +260,8 @@ def main():
         cmd_ctl(a)
     elif a.cmd == "continue":
         cmd_continue(a)
+    elif a.cmd == "push":
+        cmd_push(a)
     elif a.cmd == "limits":
         cmd_limits(a)
     elif a.cmd == "cc":

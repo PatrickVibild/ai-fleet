@@ -247,6 +247,18 @@ class Stalls(unittest.TestCase):
         self.assertIn("Orchestrator stopped", tree["status"])
         self.assertIn("fixer is on it", tree["status"])
 
+    def test_a_finished_run_shows_its_idle_orchestrator_as_done_with_git_ticks(self):
+        self.fleet.questions, self.fleet.sudo, self.fleet.summaries, self.fleet.windows = {}, {}, {}, {}
+        self.fleet.gitinfo, self.fleet.pushes = {"/tmp/x": {"merged": True, "pushed": False}}, {}
+        self.fleet.listening = set()
+        self.run.d["orchestrator"], self.run.d["status"] = "o1", "done"
+        self.run.ticket("1")["state"] = MERGED
+        self.session("o1", 900, [entry("assistant", self.iso(-800), [{"type": "text", "text": "all merged"}], id="o")])
+        self.fleet.agents["o1"].update(status="idle")
+        out = next(r for r in self.fleet.snapshot()["runs"] if r["id"] == self.run.id)
+        self.assertEqual(out["tree"]["state"], "done")
+        self.assertEqual(out["git"], {"merged": True, "pushed": False, "push": None})
+
 
 class WakeOrchestrator(Stalls):
     """An orchestrator that stopped following its run is resumed when an event it should see arrives."""
@@ -354,6 +366,132 @@ class ClaudeMd(unittest.TestCase):
         self.assertEqual(md["files"][0]["path"], "~/.claude/CLAUDE.md")
         self.assertEqual(md["tokens"], 1110)
         self.assertEqual(memory.claude_md(None)["tokens"], 100)
+
+
+class MergedAndPushed(unittest.TestCase):
+    """The panel's two ticks for finished work, and the push behind the second one, against real git repos."""
+
+    def setUp(self):
+        import asyncio
+        import subprocess
+        from fleet import git
+        self.asyncio, self.subprocess, self.git = asyncio, subprocess, git
+        from unittest import mock
+        env = mock.patch.dict(os.environ, {"GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1",
+                                           "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+                                           "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"})
+        env.start()
+        self.addCleanup(env.stop)
+        self.root = Path(tempfile.mkdtemp())
+        self.repo = self.root / "repo"
+        self.sh("git", "init", "-q", "-b", "main", str(self.repo))
+        self.commit("one")
+
+    def sh(self, *args, cwd=None):
+        return self.subprocess.run(args, cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
+
+    def commit(self, msg, cwd=None):
+        cwd = cwd or self.repo
+        (Path(cwd) / f"{msg}.txt").write_text(msg)
+        self.sh("git", "add", ".", cwd=cwd)
+        self.sh("git", "commit", "-q", "-m", msg, cwd=cwd)
+
+    def remote(self, name="origin"):
+        bare = self.root / f"{name}.git"
+        self.sh("git", "init", "-q", "--bare", "-b", "main", str(bare))
+        self.sh("git", "remote", "add", name, str(bare), cwd=self.repo)
+        return bare
+
+    def status(self, path=None, base=None):
+        return self.asyncio.run(self.git.status(path or self.repo, base))
+
+    def push(self, path=None):
+        return self.asyncio.run(self.git.push(path or self.repo, self.status(path)))
+
+    def test_merged_work_pushes_the_base_branch_and_ticks_both(self):
+        self.remote()
+        st = self.status()
+        self.assertEqual((st["merged"], st["pushed"], st["target"], st["remote"], st["unpushed"]),
+                         (True, False, "main", "origin", 1))
+        ok, kind, msg, _ = self.push()
+        self.assertTrue(ok, msg)
+        st = self.status()
+        self.assertTrue(st["pushed"])
+        self.commit("two")   # main has an upstream now: a plain push, no -u
+        self.assertEqual(self.status()["unpushed"], 1)
+        self.assertTrue(self.push()[0])
+
+    def test_unmerged_branch_pushes_itself(self):
+        self.remote()
+        wt = self.root / "wt"
+        self.sh("git", "worktree", "add", "-q", "-b", "feature", str(wt), cwd=self.repo)
+        self.commit("feat", cwd=wt)
+        st = self.status(wt)
+        self.assertEqual((st["branch"], st["base"], st["merged"], st["target"]), ("feature", "main", False, "feature"))
+        self.assertTrue(self.push(wt)[0])
+        self.assertIn("origin/feature", self.sh("git", "branch", "-r", cwd=self.repo))
+        self.sh("git", "merge", "-q", "feature", cwd=self.repo)
+        st = self.status(wt)
+        self.assertEqual((st["merged"], st["target"], st["pushed"]), (True, "main", True))
+
+    def test_uncommitted_changes_are_counted(self):
+        (self.repo / "one.txt").write_text("changed")
+        self.assertEqual(self.status()["dirty"], 1)
+
+    def test_no_remote_says_how_to_add_one(self):
+        st = self.status()
+        self.assertEqual((st["remote"], st["pushed"]), ("", False))
+        ok, kind, msg, _ = self.push()
+        self.assertEqual((ok, kind), (False, "no_remote"))
+        self.assertIn("git remote add origin", msg)
+
+    def test_missing_remote_repository(self):
+        self.sh("git", "remote", "add", "origin", str(self.root / "gone.git"), cwd=self.repo)
+        ok, kind, msg, _ = self.push()
+        self.assertEqual((ok, kind), (False, "not_found"))
+        self.assertIn("doesn't exist", msg)
+
+    def test_remote_ahead_is_rejected_with_a_pull_hint(self):
+        bare = self.remote()
+        self.assertTrue(self.push()[0])
+        other = self.root / "other"
+        self.sh("git", "clone", "-q", str(bare), str(other))
+        self.commit("theirs", cwd=other)
+        self.sh("git", "push", "-q", "origin", "main", cwd=other)
+        self.commit("mine")
+        ok, kind, msg, _ = self.push()
+        self.assertEqual((ok, kind), (False, "behind"))
+        self.assertIn("Pull", msg)
+
+    def test_explains_what_hosts_print(self):
+        cases = {
+            "ERROR: Repository not found.\nfatal: Could not read from remote repository.": "not_found",
+            "git@github.com: Permission denied (publickey).\nfatal: Could not read from remote repository.": "no_access",
+            "remote: Permission to me/x.git denied to someone.\nfatal: unable to access 'https://github.com/me/x.git/': "
+            "The requested URL returned error: 403": "no_access",
+            "fatal: could not read Username for 'https://github.com': terminal prompts disabled": "no_access",
+            "Host key verification failed.": "host_key",
+            "remote: error: GH006: Protected branch update failed for refs/heads/main.": "protected",
+            "! [rejected]        main -> main (fetch first)": "behind",
+            "ssh: Could not resolve host: github.com": "network",
+            "fatal: something new": "other",
+        }
+        for out, kind in cases.items():
+            self.assertEqual(self.git.explain_push(out, "origin", "git@github.com:me/x.git", "main")[0], kind, out)
+        self.assertEqual(self.git.explain_push("fatal: something new")[1], "git push failed: fatal: something new")
+
+    def test_daemon_push_keeps_the_reason_on_the_row(self):
+        f = Fleet.__new__(Fleet)
+        f.runs, f.gitinfo, f.pushes = {}, {}, {}
+        f.agents = {"s1": {"sessionId": "s1", "pid": 1, "cwd": str(self.repo)}}
+        with self.assertRaisesRegex(ValueError, "no remote"):
+            self.asyncio.run(f.push(str(self.repo)))
+        self.assertEqual(f.git_view(str(self.repo))["push"]["kind"], "no_remote")
+        self.remote()
+        self.assertIn("Pushed", self.asyncio.run(f.push(str(self.repo)))["msg"])
+        self.assertTrue(f.git_view(str(self.repo))["pushed"])
+        with self.assertRaisesRegex(ValueError, "isn't a finished run"):
+            self.asyncio.run(f.push(str(self.root)))
 
 
 if __name__ == "__main__":

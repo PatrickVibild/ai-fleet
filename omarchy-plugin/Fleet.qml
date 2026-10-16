@@ -80,6 +80,7 @@ QtObject {
     Process {
       id: proc
       property string label: ""
+      property string failLabel: label
       property string secret: ""
       property bool hasSecret: false
       stdinEnabled: hasSecret
@@ -87,19 +88,21 @@ QtObject {
       stderr: StdioCollector { id: err; waitForEnd: true }
       onStarted: if (hasSecret) { write(secret + "\n"); secret = "" }
       onExited: function(code) {
-        if (code !== 0) root.toast((label ? label + ": " : "") + (String(err.text || out.text || "failed").trim().split("\n").pop()), true)
+        if (code !== 0) root.toast((failLabel ? failLabel + ": " : "") + (String(err.text || out.text || "failed").trim().split("\n").pop()), true)
         else if (label) root.toast(label, false)
         Qt.callLater(function() { proc.destroy() })
       }
     }
   }
 
-  // run(["kill", run, ticket], "Killed #14")
-  function run(args, doneLabel, secret) {
-    var p = cmdComponent.createObject(root, {
+  // run(["kill", run, ticket], "Killed #14"); failLabel prefixes the error toast instead of doneLabel
+  function run(args, doneLabel, secret, failLabel) {
+    var props = {
       command: [fleetBin].concat(args), label: doneLabel || "",
       hasSecret: secret !== undefined, secret: secret || ""
-    })
+    }
+    if (failLabel !== undefined) props.failLabel = failLabel
+    var p = cmdComponent.createObject(root, props)
     p.running = true
   }
 
