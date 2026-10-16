@@ -33,6 +33,7 @@ key, a protected branch, the remote is ahead (pull first), or the network.
 
     ./install.sh            # links everything into place and starts the daemon
     ./install.sh --remove   # undoes it; runs and settings are kept
+    ./install-skills.sh     # installs Matt Pocock's skills plugin (provides /implement)
 
 Code stays here. Settings: `~/.config/ai-fleet/limits.toml` (the panel edits it too).
 State: `~/.local/state/ai-fleet/`. Socket: `$XDG_RUNTIME_DIR/ai-fleet.sock`.
