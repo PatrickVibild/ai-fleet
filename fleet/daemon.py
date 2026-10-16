@@ -1118,6 +1118,15 @@ class Fleet:
                 "id": f"orch-{r.id}", "kind": "orchestrator", "name": "orchestrator", "tag": r.d["name"],
                 "state": "run", "status": "No orchestrator session attached", "children": [], "ctx": None, "tokens": 0}
             tree["children"] = lanes + [c for c in tree.get("children", []) if c["kind"] != "implementor"]
+            if orch and r.d["status"] in LIVE_RUN and not tree["alive"]:
+                # The orchestrator's session ended (often a usage limit) but the run goes on; don't call it done.
+                states = {c.get("state") for c in lanes}
+                tree["state"] = "attn" if "attn" in states else "run" if "run" in states or \
+                    r.d.get("finalCheck") in ("running", "cleanup") else "wait"
+                tree["status"] = "Orchestrator stopped; the run goes on without it · " + (
+                    (r.d.get("held") or {}).get("reason") or f"{sum(t['state'] == MERGED for t in r.tickets.values())}"
+                                                             f"/{len(r.tickets)} merged")
+                tree["note"], tree["endedAt"] = "no orchestrator", None
             runs_out.append({"id": r.id, "name": r.d["name"], "repo": r.d["repo"], "base": r.d["base"],
                              "status": r.d["status"], "held": r.d.get("held"), "problem": r.d.get("problem"),
                              "finalCheck": r.d.get("finalCheck"), "finalCheckAt": r.d.get("finalCheckAt"),

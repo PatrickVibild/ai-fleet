@@ -233,6 +233,21 @@ class Stalls(unittest.TestCase):
         self.assertEqual(t["state"], RUNNING)
 
 
+    def test_a_live_run_whose_orchestrator_ended_is_not_shown_as_done(self):
+        self.fleet.questions, self.fleet.sudo, self.fleet.summaries, self.fleet.windows = {}, {}, {}, {}
+        self.run.d["orchestrator"] = "o1"
+        self.run.ticket("1")["state"] = MERGED
+        self.run.d["held"] = {"kind": "hold", "reason": "The full suite fails on `main`. A fixer is on it."}
+        self.session("o1", 900, [entry("assistant", self.iso(-800), [{"type": "text", "text": "stopping"}], id="o")])
+        self.fleet.agents["o1"] = {"sessionId": "o1"}   # ended: no pid
+        h = self.session("f1", 60, [entry("assistant", self.iso(-50), [{"type": "text", "text": "fixing"}], id="f")])
+        self.run.d["helpers"].append({"kind": "fixer", "state": "run", "after": "the last ticket", **h})
+        tree = next(r for r in self.fleet.snapshot()["runs"] if r["id"] == self.run.id)["tree"]
+        self.assertEqual(tree["state"], "run")
+        self.assertIn("Orchestrator stopped", tree["status"])
+        self.assertIn("fixer is on it", tree["status"])
+
+
 class ClaudeMd(unittest.TestCase):
     def test_counts_user_file_and_files_up_to_the_git_root_not_beyond(self):
         root = Path(tempfile.mkdtemp())
