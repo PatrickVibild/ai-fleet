@@ -50,7 +50,7 @@ ColumnLayout {
     }
     Row {
       spacing: Style.space(6)
-      visible: !!sec.run && ["active", "paused"].indexOf(sec.run.status) >= 0 && !sec.confirmingAbort
+      visible: !!sec.run && !sec.run.mock && ["active", "paused"].indexOf(sec.run.status) >= 0 && !sec.confirmingAbort
       SmallButton {
         text: sec.run && sec.run.status === "paused" ? "▶ Resume" : "❚❚ Pause"
         tone: sec.view.fg; font: sec.view.fontFamily

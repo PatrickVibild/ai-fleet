@@ -15,7 +15,7 @@ import subprocess
 import time
 import uuid
 
-from . import account, claude, config, git, memory, paths, skills, testcounts
+from . import account, claude, config, git, memory, mock, paths, skills, testcounts
 from .runs import (ATTN, CONFLICT, KILLED, LIVE_RUN, MERGED, MERGING, READY, REVIEW, RUNNING, TESTING, WAIT,
                    Run, slug)
 
@@ -112,6 +112,7 @@ class Fleet:
         self.gitinfo = {}        # checkout path -> git.status() of a finished run's repo or a session's cwd
         self.pushes = {}         # checkout path -> the last push from the panel: {state, kind, msg, at}
         self.checks = {}         # run id -> check commands the daemon runs itself, shown under the orchestrator
+        self.mock_since = None   # when `fleet mock on` started the made-up run the panel shows (fleet/mock.py)
         try:
             self.windows = json.loads(paths.MODEL_WINDOWS.read_text())
         except (OSError, json.JSONDecodeError):
@@ -201,6 +202,9 @@ class Fleet:
                 self.live_tried = 0  # and fetch the account's usage fresh (a plan change shows up here)
             self.last_view = time.time()
             return {}
+        if op == "mock":
+            self.mock_since = (self.mock_since or time.time()) if req.get("on") else None
+            return {"on": self.mock_since is not None}
         if op == "events":
             r = self._run(req["run"])
             return {"path": str(r.dir / "events.jsonl")}
@@ -1401,6 +1405,8 @@ class Fleet:
             if (r.d.get("held") or {}).get("kind") == "repo":
                 attention.append({"id": f"{r.id}:held", "type": "repo", "run": r.id, "who": f"run · {r.d['name']}",
                                   "where": r.d["repo"], "msg": r.d["held"]["reason"]})
+        if getattr(self, "mock_since", None):
+            runs_out.append(mock.run(time.time(), self.mock_since, self.cfg["implementors_per_orchestrator"]))
         for q in self.questions.values():
             if q.state == "user":
                 r = self.runs.get(q.run)

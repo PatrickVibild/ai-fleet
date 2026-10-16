@@ -357,6 +357,24 @@ class Stalls(unittest.TestCase):
         self.assertNotIn("/tmp/x", self.fleet.git_targets())
 
 
+    def test_the_mock_run_is_only_on_the_panel_and_counts_up(self):
+        import asyncio
+        from fleet import mock
+        self.fleet.questions, self.fleet.sudo, self.fleet.summaries, self.fleet.windows = {}, {}, {}, {}
+        self.fleet.listening = set()
+        self.fleet.mock_since = None
+        self.assertEqual(asyncio.run(self.fleet.dispatch({"op": "mock", "on": True}, 0)), {"on": True})
+        out = next(r for r in self.fleet.snapshot()["runs"] if r["id"] == "mock-docs-diet")
+        self.assertEqual([t["id"] for t in out["tickets"]], ["38", "39", "40", "41", "42", "43"])
+        self.assertNotIn("mock-docs-diet", self.fleet.runs)   # nothing for the scheduler to pick up
+        early = mock.live_check(1000 + 10, 1000)["tests"]
+        later = mock.live_check(1000 + 80, 1000)["tests"]
+        self.assertLess(early["total"], later["total"])
+        self.assertEqual((early["failed"], later["failed"]), (0, 1))
+        self.assertEqual(mock.live_check(1000 + 110, 1000)["state"], "done")
+        asyncio.run(self.fleet.dispatch({"op": "mock", "on": False}, 0))
+        self.assertNotIn("mock-docs-diet", [r["id"] for r in self.fleet.snapshot()["runs"]])
+
     def test_a_running_check_shows_under_the_orchestrator_beside_its_ticket(self):
         import asyncio
         self.fleet.questions, self.fleet.sudo, self.fleet.summaries, self.fleet.windows = {}, {}, {}, {}
