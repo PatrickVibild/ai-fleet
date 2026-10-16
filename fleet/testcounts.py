@@ -136,15 +136,20 @@ EXPECTED = [re.compile(r"^collected (\d+) items?(?: / \d+ deselected / (\d+) sel
 
 
 class Progress:
-    """Counts tests as a runner's output arrives. snapshot() gives the counts so far and, when the runner said
-    how many it will run, the expected total (summed across chained runs, e.g. `pytest a && pytest b`)."""
+    """Counts tests as a runner's output arrives.
+
+    snapshot() gives the counts so far and the expected total, 0 when unknown. Chained runs (`pytest a && pytest b`)
+    are tracked one at a time and added up: each finished run counts what it ran, and the current one counts what
+    it said it would run, or for pytest -q (which never says) an estimate from its [ 42%] markers.
+    """
 
     def __init__(self):
         self.n = {"passed": 0, "failed": 0, "skipped": 0}
-        self.expected = 0   # what runners said they'd run
         self.partial = ""
-        # pytest -q never says how many it collected, but ends each line with [ 42%]: estimate from that
-        self.run_tests, self.run_pct, self.ended_runs = 0, 0, 0
+        self.before = 0     # tests run by runs that have finished
+        self.said = 0       # what the current run said it will run
+        self.ran = 0        # tests the current run has finished
+        self.pct = 0        # the current run's latest [ 42%]
 
     def feed(self, data):
         text = self.partial + ANSI.sub("", data.decode(errors="replace") if isinstance(data, bytes) else data)
@@ -153,34 +158,40 @@ class Progress:
         for line in lines:
             self._line(line)
 
+    def _count(self, outcome, k=1):
+        self.n[outcome] += k
+        self.ran += k
+
     def _line(self, line):
-        m = DOTS.match(line.strip())
+        s = line.strip()
+        m = DOTS.match(s)
         if m:
             for c in m.group(1):
-                self.n[DOT_MARK[c]] += 1
-            self.run_tests += len(m.group(1))
-            self.run_pct = int(m.group(2) or self.run_pct)
+                self._count(DOT_MARK[c])
+            self.pct = int(m.group(2) or self.pct)
             return
-        if PYTEST_END.match(line.strip()):   # a pytest run finished; a chained one starts counting afresh
-            self.ended_runs += self.run_tests
-            self.run_tests, self.run_pct = 0, 0
+        if PYTEST_END.match(s):   # this pytest run is over; a chained one starts afresh
+            self.before += self.ran
+            self.said = self.ran = self.pct = 0
             return
         for pat, outcome in LINE_MARKS:
             m = pat.search(line)
             if m:
-                self.n[outcome[m.group(1)]] += 1
+                self._count(outcome[m.group(1)])
+                pct = re.search(r"\[\s*(\d+)%\]\s*$", s)   # pytest -v ends its lines with one too
+                self.pct = int(pct.group(1)) if pct else self.pct
                 return
         m = VITEST_FILE.match(line)
         if m:
             total, failed, skipped = (int(x or 0) for x in m.groups())
-            self.n["failed"] += failed
-            self.n["skipped"] += skipped
-            self.n["passed"] += total - failed - skipped
+            self._count("failed", failed)
+            self._count("skipped", skipped)
+            self._count("passed", total - failed - skipped)
             return
         for pat in EXPECTED:
-            m = pat.match(line.strip())
+            m = pat.match(s)
             if m:
-                self.expected += int(m.groups()[-1] or m.group(1))
+                self.said += int(m.groups()[-1] or m.group(1))   # cargo says it once per test binary
                 return
 
     def snapshot(self):
@@ -189,5 +200,10 @@ class Progress:
         if m:
             for c in m.group(1):
                 n[DOT_MARK[c]] += 1
-        guess = self.ended_runs + round(self.run_tests * 100 / self.run_pct) if self.run_pct else 0
-        return {**counts(n["passed"], n["failed"], n["skipped"]), "expected": self.expected or guess}
+        out = counts(n["passed"], n["failed"], n["skipped"])
+        current = self.said or (round(self.ran * 100 / self.pct) if self.pct else 0)
+        known = bool(current) or self.ran == 0
+        expected = self.before + current if known else 0
+        out["expected"] = expected if expected >= out["total"] else 0
+        out["estimated"] = bool(out["expected"]) and not self.said and bool(self.pct)
+        return out

@@ -163,23 +163,34 @@ class TestCounts(unittest.TestCase):
         p = testcounts.Progress()
         p.feed(b"============ test session starts ============\ncollected 12 items\n\n")
         p.feed(b"tests/test_a.py ..F.")
-        self.assertEqual(p.snapshot(), {"passed": 3, "failed": 1, "skipped": 0, "total": 4, "expected": 12})
+        self.assertEqual(p.snapshot(), {"passed": 3, "failed": 1, "skipped": 0, "total": 4,
+                                        "expected": 12, "estimated": False})
         p.feed(b"s.   [ 50%]\ntests/test_b.py ..")
         self.assertEqual(p.snapshot()["total"], 8)
-        p.feed(b"\x1b[32m....\x1b[0m [100%]\ncollected 3 items\nsmoke.py::test_x PASSED [ 33%]\n")
-        self.assertEqual(p.snapshot(), {"passed": 11, "failed": 1, "skipped": 1, "total": 13, "expected": 15})
+        p.feed(b"\x1b[32m....\x1b[0m [100%]\n=== 1 failed, 10 passed, 1 skipped in 2.0s ===\n"
+               b"collected 3 items\nsmoke.py::test_x PASSED [ 33%]\n")
+        self.assertEqual(p.snapshot(), {"passed": 11, "failed": 1, "skipped": 1, "total": 13,
+                                        "expected": 15, "estimated": False})
 
     def test_pytest_q_expected_total_comes_from_its_percentages(self):
         p = testcounts.Progress()
         p.feed("." * 80 + " [ 20%]\n")
-        self.assertEqual(p.snapshot()["expected"], 400)
+        self.assertEqual((p.snapshot()["expected"], p.snapshot()["estimated"]), (400, True))
         p.feed("." * 320 + " [100%]\n400 passed in 9.0s\n" + "s" * 10 + " [ 50%]\n")
         self.assertEqual(p.snapshot()["expected"], 420)   # the first run's 400, then half of a second run
+
+    def test_a_quiet_run_then_one_that_states_its_count_add_up(self):
+        # what the Aegir full check prints: pytest -q (no count, only percentages), then the smoke test
+        p = testcounts.Progress()
+        p.feed("." * 4848 + " [100%]\n4848 passed in 60.0s\ncollected 51 items\n\ntests/test_render_smoke.py ss")
+        self.assertEqual(p.snapshot()["total"], 4850)
+        self.assertEqual((p.snapshot()["expected"], p.snapshot()["estimated"]), (4899, False))
 
     def test_unittest_dots_count_before_their_line_ends(self):
         p = testcounts.Progress()
         p.feed("..s.F")
-        self.assertEqual(p.snapshot(), {"passed": 3, "failed": 1, "skipped": 1, "total": 5, "expected": 0})
+        self.assertEqual(p.snapshot(), {"passed": 3, "failed": 1, "skipped": 1, "total": 5,
+                                        "expected": 0, "estimated": False})
 
     def test_only_test_commands_count(self):
         self.assertTrue(testcounts.is_test_command("/x/.venv/bin/python -m pytest -q"))
