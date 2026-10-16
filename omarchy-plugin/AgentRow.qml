@@ -88,6 +88,33 @@ Item {
     width: parent.width - x - Style.space(10)
     spacing: Style.space(8)
 
+    // actions, at the left so they never cover a column: kill (or retry once it's stopped) always, open on hover
+    Item {
+      Layout.preferredWidth: Style.space(50)
+      Layout.preferredHeight: Style.space(22)
+      Layout.alignment: Qt.AlignTop
+      Layout.topMargin: -Style.space(3)
+      Row {
+        spacing: Style.space(2)
+        PanelActionButton {
+          visible: r.row.kind === "implementor" && (r.row.state === "killed" || r.row.state === "attn")
+          iconText: "󰑓"; tooltipText: "Retry (r)"; foreground: r.view.dim; hoverColor: r.view.fg
+          onClicked: r.view.retry(r.row)
+        }
+        PanelActionButton {
+          visible: U.canOpen(r.row) && r.row.state !== "killed"
+              && (r.row.alive || ["run", "attn", "wait"].indexOf(r.row.state) >= 0)
+          iconText: "󰅖"; tooltipText: "Kill (x)"; foreground: r.confirming ? r.fleet.red : r.view.dim; hoverColor: r.fleet.red
+          onClicked: r.view.confirmKill = r.row.key
+        }
+        PanelActionButton {
+          visible: r.hot && U.canOpen(r.row) && r.row.state !== "killed"
+          iconText: ""; tooltipText: "Open in a terminal (o)"; foreground: r.view.dim; hoverColor: r.view.fg
+          onClicked: r.view.openRow(r.row)
+        }
+      }
+    }
+
     Text {
       Layout.preferredWidth: Style.space(12)
       Layout.alignment: Qt.AlignTop
@@ -157,6 +184,14 @@ Item {
           font.pixelSize: Style.font.body
           font.bold: r.row.kind !== "shell" && r.row.kind !== "skill"
           font.letterSpacing: r.row.kind === "orchestrator" ? 0.6 : 0
+        }
+        // asked from the kill button at the left, so answered right beside the name
+        Row {
+          visible: r.confirming
+          spacing: Style.space(4)
+          Text { text: "Kill?"; color: r.fleet.red; font.family: r.view.fontFamily; font.pixelSize: Style.font.bodySmall; anchors.verticalCenter: parent.verticalCenter }
+          SmallButton { text: "Kill"; tone: r.fleet.red; font: r.view.fontFamily; onClicked: r.view.kill(r.row) }
+          SmallButton { text: "Keep"; tone: r.view.dim; font: r.view.fontFamily; onClicked: r.view.confirmKill = "" }
         }
         Text {
           Layout.fillWidth: true
@@ -267,23 +302,19 @@ Item {
     }
 
     // TESTS: the latest run's passed and failed, live while a daemon check runs (the last test command an agent
-    // ran otherwise). A row's actions take this column over while it's hovered.
+    // ran otherwise)
     Item {
       id: lastCol
       readonly property bool counting: r.live && r.row.kind === "check"
       readonly property bool knowsTotal: r.row.testExpected > 0 && r.row.testExpected >= r.row.testTotal
-      readonly property bool hasTests: r.row.testTotal > 0 || counting
-      readonly property bool hasActions: U.canOpen(r.row)
-          || (r.row.kind === "implementor" && (r.row.state === "killed" || r.row.state === "attn"))
-      readonly property bool showActions: r.confirming || (r.hot && hasActions)
-      Layout.preferredWidth: Style.space(96)
+      Layout.preferredWidth: Style.space(110)
       Layout.preferredHeight: tests.visible ? tests.implicitHeight : Style.space(22)
       Layout.alignment: Qt.AlignTop
 
       ColumnLayout {
         id: tests
         width: parent.width
-        visible: lastCol.hasTests && !lastCol.showActions
+        visible: r.row.testTotal > 0 || lastCol.counting
         spacing: Style.space(2)
         Row {
           Layout.alignment: Qt.AlignRight
@@ -310,9 +341,9 @@ Item {
               : lastCol.knowsTotal ? Math.floor(100 * r.row.testTotal / r.row.testExpected) + "% of "
                                      + (r.row.testEstimated ? "~" : "") + r.row.testExpected
               : r.row.testTotal + " run"
-          color: r.view.dim
+          color: r.view.fg
           font.family: r.view.fontFamily
-          font.pixelSize: Style.font.caption
+          font.pixelSize: Style.font.bodySmall
         }
         // progress against what the runner said it would run: passed, failed and skipped in their colors
         Rectangle {
@@ -341,35 +372,6 @@ Item {
               + (r.row.testCmd !== "" ? "\n" + r.row.testCmd : "")
           fontFamily: r.view.fontFamily
         }
-      }
-
-      Row {
-        anchors.right: parent.right
-        spacing: Style.space(2)
-        visible: lastCol.showActions && !r.confirming
-        PanelActionButton {
-          visible: r.row.kind === "implementor" && (r.row.state === "killed" || r.row.state === "attn")
-          iconText: "󰑓"; tooltipText: "Retry (r)"; foreground: r.view.dim; hoverColor: r.view.fg
-          onClicked: r.view.retry(r.row)
-        }
-        PanelActionButton {
-          visible: U.canOpen(r.row) && r.row.state !== "killed"
-          iconText: ""; tooltipText: "Open in a terminal (o)"; foreground: r.view.dim; hoverColor: r.view.fg
-          onClicked: r.view.openRow(r.row)
-        }
-        PanelActionButton {
-          visible: U.canOpen(r.row) && (r.row.alive || ["run", "attn", "wait"].indexOf(r.row.state) >= 0)
-          iconText: "󰅖"; tooltipText: "Kill (x)"; foreground: r.view.dim; hoverColor: r.fleet.red
-          onClicked: r.view.confirmKill = r.row.key
-        }
-      }
-      Row {
-        anchors.right: parent.right
-        spacing: Style.space(4)
-        visible: r.confirming
-        Text { text: "Kill?"; color: r.fleet.red; font.family: r.view.fontFamily; font.pixelSize: Style.font.bodySmall; anchors.verticalCenter: parent.verticalCenter }
-        SmallButton { text: "Kill"; tone: r.fleet.red; font: r.view.fontFamily; onClicked: r.view.kill(r.row) }
-        SmallButton { text: "Keep"; tone: r.view.dim; font: r.view.fontFamily; onClicked: r.view.confirmKill = "" }
       }
     }
   }
