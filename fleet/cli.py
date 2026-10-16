@@ -233,7 +233,7 @@ def main():
     s.add_argument("prompt", nargs="*")
     s.add_argument("-n", "--name")
     s.add_argument("-w", "--worktree")
-    s.add_argument("--permission-mode", default="default")
+    s.add_argument("--permission-mode", default="auto")
     s = sub.add_parser("sudo-answer", help="answer a sudo request (password on stdin)")
     s.add_argument("id")
     s.add_argument("--deny", action="store_true")

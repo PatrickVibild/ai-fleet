@@ -27,11 +27,11 @@ Item {
   implicitHeight: laneGap + Math.max(Style.space(36), content.implicitHeight + Style.space(14))
 
   function stateColor() {
-    if (row.state === "attn") return fleet.red
+    if (row.state === "attn" || (row.kind === "check" && row.note === "red")) return fleet.red
     if (row.state === "done") return fleet.green
     if (row.state === "wait") return fleet.yellow
     if (row.state === "killed" || row.state === "blocked") return view.dim
-    if (row.kind === "shell") return fleet.cyan
+    if (row.kind === "shell" || row.kind === "check") return fleet.cyan
     if (row.kind === "skill") return laneColor
     return inLane ? laneColor : fleet.accent
   }
@@ -131,9 +131,10 @@ Item {
       Rectangle {
         id: dot
         anchors.centerIn: parent
-        width: r.row.kind === "shell" ? Style.space(8) : Style.space(7)
-        height: r.row.kind === "shell" ? 2 : width
-        radius: r.row.kind === "skill" || r.row.kind === "shell" ? 1 : width / 2
+        readonly property bool dash: r.row.kind === "shell" || r.row.kind === "check"
+        width: dash ? Style.space(8) : Style.space(7)
+        height: dash ? 2 : width
+        radius: r.row.kind === "skill" || dash ? 1 : width / 2
         rotation: r.row.kind === "skill" ? 45 : 0
         color: r.row.state === "killed" || r.row.state === "blocked" ? "transparent" : r.stateColor()
         border.color: r.stateColor()
@@ -167,9 +168,9 @@ Item {
           font.pixelSize: Style.font.body
         }
         Pill { visible: r.row.state === "attn"; text: "needs you"; tone: r.fleet.red; font: r.view.fontFamily }
-        Pill { visible: r.row.state === "done" && r.row.depth <= 1; text: "done"; tone: r.fleet.green; font: r.view.fontFamily }
+        Pill { visible: r.row.state === "done" && r.row.depth <= 1 && r.row.kind !== "check"; text: "done"; tone: r.fleet.green; font: r.view.fontFamily }
         Pill { visible: r.row.state === "killed"; text: "killed"; tone: r.view.dim; font: r.view.fontFamily }
-        Pill { visible: r.row.note !== ""; text: r.row.note; tone: r.fleet.magenta; font: r.view.fontFamily }
+        Pill { visible: r.row.note !== ""; text: r.row.note; tone: r.row.kind !== "check" ? r.fleet.magenta : r.row.note === "red" ? r.fleet.red : r.row.note === "green" ? r.fleet.green : r.fleet.cyan; font: r.view.fontFamily }
       }
       Text {
         Layout.fillWidth: true
@@ -184,6 +185,42 @@ Item {
         wrapMode: Text.Wrap
         maximumLineCount: 2
         elide: Text.ElideRight
+      }
+      // the latest test run's counts: the daemon's own check, or the last test command the agent ran
+      RowLayout {
+        Layout.fillWidth: true
+        visible: r.row.testTotal > 0
+        spacing: Style.space(8)
+        Text {
+          text: "✓ " + r.row.testPassed + " passed"
+          color: r.fleet.green
+          font.family: r.view.fontFamily
+          font.pixelSize: Style.font.bodySmall
+        }
+        Text {
+          visible: r.row.testFailed > 0
+          text: "✗ " + r.row.testFailed + " failed"
+          color: r.fleet.red
+          font.family: r.view.fontFamily
+          font.pixelSize: Style.font.bodySmall
+          font.bold: true
+        }
+        Text {
+          visible: r.row.testSkipped > 0
+          text: r.row.testSkipped + " skipped"
+          color: r.view.dim
+          font.family: r.view.fontFamily
+          font.pixelSize: Style.font.bodySmall
+        }
+        Text {
+          Layout.fillWidth: true
+          Layout.minimumWidth: 0
+          text: "of " + r.row.testTotal + (r.row.kind !== "check" && r.row.testCmd !== "" ? " · " + r.row.testCmd : "")
+          elide: Text.ElideRight
+          color: r.view.dim
+          font.family: r.view.fontFamily
+          font.pixelSize: Style.font.bodySmall
+        }
       }
       // your own session in a git repo, once it stops working: is the work merged, and is it pushed?
       GitTicks {

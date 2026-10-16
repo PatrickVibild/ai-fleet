@@ -60,7 +60,7 @@ Panel {
   }
 
   // Lanes keep one color per ticket for the life of a run: implementors cycle the theme's accents,
-  // the merger is neutral, the fixer is yellow.
+  // the merger is neutral, the fixer is yellow, the daemon's base-branch checks are cyan.
   readonly property var lanePalette: [fleet.accent, fleet.magenta, fleet.green, fleet.cyan]
   function laneColorForTicket(run, ticketId) {
     var ts = run ? run.tickets || [] : []
@@ -70,6 +70,7 @@ Panel {
   function laneFor(run, node) {
     if (node.kind === "fixer") return String(fleet.yellow)
     if (node.kind === "merger") return String(fg)
+    if (node.kind === "check" && !node.ticket) return String(fleet.cyan)
     if (node.ticket) return laneColorForTicket(run, node.ticket)
     return String(fleet.accent)
   }
