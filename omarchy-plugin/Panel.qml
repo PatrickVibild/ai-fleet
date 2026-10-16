@@ -125,6 +125,7 @@ Panel {
     i = i < 0 ? (d > 0 ? 0 : order.length - 1) : Math.max(0, Math.min(order.length - 1, i + d))
     focusedKey = order[i]
     confirmKill = ""
+    closeMenu()
   }
   function focused() { return rowIndex[focusedKey] || null }
 
@@ -137,6 +138,53 @@ Panel {
     else if (row.short) fleet.run(["stop", row.short], "Stopped " + row.short)
   }
   function retry(row) { if (row.runId && row.ticket) fleet.run(["retry", row.runId, row.ticket], "Retrying #" + row.ticket) }
+
+  // ---- right-click menu on a row: open, retry, kill (kill asks first, inside the menu)
+  property var menuRow: null
+  property string menuKey: ""
+  property bool menuConfirm: false
+  property real menuX: 0
+  property real menuY: 0
+  function killable(row) {
+    return U.canOpen(row) && row.state !== "killed" && (row.alive || ["run", "attn", "wait"].indexOf(row.state) >= 0)
+  }
+  function killLabel(row) {
+    var run = row.kind === "orchestrator" && row.runId ? runById(row.runId) : null
+    return run && ["done", "aborted"].indexOf(run.status) >= 0 ? "Close run" : "Kill"
+  }
+  function menuItems(row) {
+    var out = []
+    if (U.canOpen(row) && row.state !== "killed") out.push({ label: "Open in terminal", hint: "o", act: "open" })
+    if (row.kind === "implementor" && (row.state === "killed" || row.state === "attn")) out.push({ label: "Retry", hint: "r", act: "retry" })
+    if (killable(row)) out.push({ label: killLabel(row) + "…", hint: "x", act: "confirm", danger: true })
+    return out
+  }
+  function confirmItems(row) {
+    return [{ label: killLabel(row) + " " + row.name + (row.tag ? " " + row.tag : ""), hint: "y", act: "kill", danger: true },
+            { label: "Keep", hint: "esc", act: "keep" }]
+  }
+  // x, y in `item`'s coordinates; `confirm` opens straight at the kill question (the x key)
+  function openMenu(row, item, x, y, confirm) {
+    if (!row || !(confirm ? killable(row) : menuItems(row).length)) return
+    var p = item.mapToItem(keyCatcher, x, y)
+    menuX = p.x; menuY = p.y
+    menuRow = row; menuKey = row.key; menuConfirm = !!confirm
+    keyCatcher.forceActiveFocus()
+  }
+  function openMenuAtRow(row, confirm) {
+    var item = rowItems[row.key]
+    if (item) openMenu(row, item, Style.space(40), item.height / 2, confirm)
+  }
+  function closeMenu() { menuRow = null; menuKey = ""; menuConfirm = false }
+  function menuAct(act) {
+    var row = menuRow
+    if (!row) return
+    if (act === "confirm") { menuConfirm = true; return }
+    closeMenu()
+    if (act === "open") openRow(row)
+    else if (act === "retry") retry(row)
+    else if (act === "kill") kill(row)
+  }
   // A finished run leaves the panel; its orchestrator is stopped if it's still around.
   function closeRun(run) { fleet.run(["close", run.id], "Closed " + run.name) }
   // A failed push toasts the daemon's reason, and GitTicks keeps showing it under the row.
@@ -167,6 +215,7 @@ Panel {
 
   onOpenedChanged: if (opened) {
     confirmKill = ""
+    closeMenu()
     rebuild()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
@@ -251,16 +300,23 @@ Panel {
         var row = root.focused()
         if (dx !== 0 && row && row.hasKids && (dx > 0) !== row.expanded) root.toggleExpand(row.key, row.expanded)
       }
-      onActivateRequested: { var row = root.focused(); if (row && row.hasKids) root.toggleExpand(row.key, row.expanded) }
-      onDeleteRequested: { var row = root.focused(); if (row) root.confirmKill = root.confirmKill === row.key ? "" : row.key }
-      onCloseRequested: root.confirmKill !== "" ? root.confirmKill = "" : root.close()
+      onActivateRequested: {
+        if (root.menuConfirm) return root.menuAct("kill")
+        var row = root.focused(); if (row && row.hasKids) root.toggleExpand(row.key, row.expanded)
+      }
+      onDeleteRequested: {
+        var row = root.focused()
+        if (row && root.menuConfirm && root.menuKey === row.key) root.closeMenu()
+        else if (row) root.openMenuAtRow(row, true)
+      }
+      onCloseRequested: root.menuRow ? root.closeMenu() : root.confirmKill !== "" ? root.confirmKill = "" : root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
       onTextKey: function(t) {
         var row = root.focused()
         if (!row) return
         if (t === "o") root.openRow(row)
         else if (t === "r" && row.kind === "implementor") root.retry(row)
-        else if (t === "y" && root.confirmKill === row.key) root.kill(row)
+        else if (t === "y" && root.menuConfirm && root.menuKey === row.key) root.menuAct("kill")
       }
 
       Flickable {
@@ -495,6 +551,73 @@ Panel {
               color: root.dim
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
+            }
+          }
+        }
+      }
+
+      // ---- the row menu, above everything; a click anywhere outside it closes it
+      MouseArea {
+        anchors.fill: parent
+        visible: root.menuRow !== null
+        acceptedButtons: Qt.AllButtons
+        onPressed: root.closeMenu()
+        onWheel: function(wheel) { root.closeMenu() }
+      }
+      Rectangle {
+        id: rowMenu
+        visible: root.menuRow !== null
+        readonly property var entries: !root.menuRow ? []
+            : root.menuConfirm ? root.confirmItems(root.menuRow) : root.menuItems(root.menuRow)
+        width: Style.space(260)
+        height: menuList.implicitHeight + Style.space(10)
+        x: Math.max(Style.space(4), Math.min(root.menuX, parent.width - width - Style.space(4)))
+        y: Math.max(Style.space(4), Math.min(root.menuY, parent.height - height - Style.space(4)))
+        radius: Style.space(6)
+        color: root.surface
+        border.color: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.18)
+        border.width: 1
+        Column {
+          id: menuList
+          x: Style.space(5); y: Style.space(5)
+          width: parent.width - Style.space(10)
+          Repeater {
+            model: rowMenu.entries
+            Rectangle {
+              required property var modelData
+              width: menuList.width
+              height: Style.space(30)
+              radius: Style.space(4)
+              color: entryArea.containsMouse
+                  ? (modelData.danger ? Qt.rgba(root.fleet.red.r, root.fleet.red.g, root.fleet.red.b, 0.16)
+                                      : Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.09))
+                  : "transparent"
+              RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: Style.space(10)
+                anchors.rightMargin: Style.space(10)
+                spacing: Style.space(10)
+                Text {
+                  Layout.fillWidth: true
+                  text: modelData.label
+                  elide: Text.ElideRight
+                  color: modelData.danger ? root.fleet.red : root.fg
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                }
+                Text {
+                  text: modelData.hint || ""
+                  color: root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                }
+              }
+              MouseArea {
+                id: entryArea
+                anchors.fill: parent
+                hoverEnabled: true
+                onClicked: root.menuAct(modelData.act)
+              }
             }
           }
         }

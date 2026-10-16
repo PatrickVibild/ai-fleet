@@ -16,8 +16,8 @@ Item {
   readonly property real laneInset: inLane ? Style.space(28) : 0
   readonly property color laneColor: row.lane !== "" ? row.lane : view.fleet.accent
   readonly property bool focused: view.focusedKey === row.key
-  readonly property bool confirming: view.confirmKill === row.key
-  readonly property bool hot: hover.containsMouse || focused || confirming || row.state === "attn"
+  readonly property bool menuOpen: view.menuKey === row.key
+  readonly property bool hot: hover.containsMouse || focused || menuOpen || row.state === "attn"
   readonly property bool live: row.state === "run"
 
   Component.onCompleted: view.rowItems[row.key] = r
@@ -68,7 +68,7 @@ Item {
     x: r.inLane ? r.laneInset + Style.space(3) : 0; y: r.laneGap
     width: parent.width - x; height: parent.height - y
     color: r.focused ? Qt.rgba(r.fleet.accent.r, r.fleet.accent.g, r.fleet.accent.b, 0.13)
-         : hover.containsMouse ? Qt.rgba(r.view.fg.r, r.view.fg.g, r.view.fg.b, 0.05) : "transparent"
+         : hover.containsMouse || r.menuOpen ? Qt.rgba(r.view.fg.r, r.view.fg.g, r.view.fg.b, 0.05) : "transparent"
     Rectangle { visible: r.focused; width: 2; height: parent.height; color: r.fleet.accent }
   }
 
@@ -76,8 +76,12 @@ Item {
     id: hover
     anchors.fill: parent
     hoverEnabled: true
-    acceptedButtons: Qt.LeftButton
-    onClicked: r.view.focusRow(r.row.key)
+    acceptedButtons: Qt.LeftButton | Qt.RightButton
+    // right click: the row's actions (open, retry, kill) in a menu at the pointer
+    onClicked: function(mouse) {
+      r.view.focusRow(r.row.key)
+      if (mouse.button === Qt.RightButton) r.view.openMenu(r.row, hover, mouse.x, mouse.y, false)
+    }
     onDoubleClicked: if (r.row.hasKids) r.view.toggleExpand(r.row.key, r.row.expanded)
   }
 
@@ -87,33 +91,6 @@ Item {
     y: r.laneGap + Style.space(7)
     width: parent.width - x - Style.space(10)
     spacing: Style.space(8)
-
-    // actions, at the left so they never cover a column: kill (or retry once it's stopped) always, open on hover
-    Item {
-      Layout.preferredWidth: Style.space(50)
-      Layout.preferredHeight: Style.space(22)
-      Layout.alignment: Qt.AlignTop
-      Layout.topMargin: -Style.space(3)
-      Row {
-        spacing: Style.space(2)
-        PanelActionButton {
-          visible: r.row.kind === "implementor" && (r.row.state === "killed" || r.row.state === "attn")
-          iconText: "󰑓"; tooltipText: "Retry (r)"; foreground: r.view.dim; hoverColor: r.view.fg
-          onClicked: r.view.retry(r.row)
-        }
-        PanelActionButton {
-          visible: U.canOpen(r.row) && r.row.state !== "killed"
-              && (r.row.alive || ["run", "attn", "wait"].indexOf(r.row.state) >= 0)
-          iconText: "󰅖"; tooltipText: "Kill (x)"; foreground: r.confirming ? r.fleet.red : r.view.dim; hoverColor: r.fleet.red
-          onClicked: r.view.confirmKill = r.row.key
-        }
-        PanelActionButton {
-          visible: r.hot && U.canOpen(r.row) && r.row.state !== "killed"
-          iconText: ""; tooltipText: "Open in a terminal (o)"; foreground: r.view.dim; hoverColor: r.view.fg
-          onClicked: r.view.openRow(r.row)
-        }
-      }
-    }
 
     Text {
       Layout.preferredWidth: Style.space(12)
@@ -184,14 +161,6 @@ Item {
           font.pixelSize: Style.font.body
           font.bold: r.row.kind !== "shell" && r.row.kind !== "skill"
           font.letterSpacing: r.row.kind === "orchestrator" ? 0.6 : 0
-        }
-        // asked from the kill button at the left, so answered right beside the name
-        Row {
-          visible: r.confirming
-          spacing: Style.space(4)
-          Text { text: "Kill?"; color: r.fleet.red; font.family: r.view.fontFamily; font.pixelSize: Style.font.bodySmall; anchors.verticalCenter: parent.verticalCenter }
-          SmallButton { text: "Kill"; tone: r.fleet.red; font: r.view.fontFamily; onClicked: r.view.kill(r.row) }
-          SmallButton { text: "Keep"; tone: r.view.dim; font: r.view.fontFamily; onClicked: r.view.confirmKill = "" }
         }
         Text {
           Layout.fillWidth: true
