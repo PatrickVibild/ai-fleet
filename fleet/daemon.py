@@ -749,6 +749,13 @@ class Fleet:
                         asyncio.create_task(self.merge_ticket(run, t))
         elif a == "abort":
             await self.abort(run)
+        elif a == "close":
+            if run.d["status"] not in ("done", "aborted"):
+                raise ValueError(f"{run.d['name']} is still {run.d['status']}; abort it first")
+            orch = self.agents.get(run.d.get("orchestrator") or "")
+            if alive(orch):
+                await claude.stop(orch.get("id"))
+            run.d["closed"] = True   # off the panel; run.json and its events stay
         else:
             t = run.ticket(req["ticket"])
             if not t:
@@ -910,7 +917,7 @@ class Fleet:
         working directory of each of your own sessions. path -> base branch (None: the repo's default branch)."""
         out = {}
         for r in self.runs.values():
-            if r.d["status"] == "done" and time.time() - r.d.get("created", 0) <= 6 * 3600:
+            if r.d["status"] == "done" and not r.d.get("closed") and time.time() - r.d.get("created", 0) <= 6 * 3600:
                 out[r.d["repo"]] = r.d["base"]
         fleet = {r.d.get("orchestrator") for r in self.runs.values()} \
             | {s.get("sessionId") for r in self.runs.values() for s in r.sessions()}
@@ -1276,7 +1283,7 @@ class Fleet:
         runs_out, attention = [], []
         fleet_sids = set()
         for r in sorted(self.runs.values(), key=lambda r: r.d["created"]):
-            if r.d["status"] in ("done", "aborted") and time.time() - r.d.get("created", 0) > 6 * 3600:
+            if r.d["status"] in ("done", "aborted") and (r.d.get("closed") or time.time() - r.d.get("created", 0) > 6 * 3600):
                 continue
             fleet_sids.add(r.d.get("orchestrator"))
             tickets = [{"id": t["id"], "title": t["title"], "blockedBy": t["blockedBy"],

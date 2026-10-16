@@ -130,10 +130,14 @@ Panel {
   function openRow(row) { if (U.canOpen(row)) { fleet.open(row.short); toast("Opened a terminal on " + row.short + ". Closing it leaves the agent running.", false) } }
   function kill(row) {
     confirmKill = ""
+    var run = row.kind === "orchestrator" && row.runId ? runById(row.runId) : null
+    if (run && ["done", "aborted"].indexOf(run.status) >= 0) return closeRun(run)
     if (row.kind === "implementor" && row.runId && row.ticket) fleet.run(["kill", row.runId, row.ticket], "Killed #" + row.ticket + ". Worktree kept.")
     else if (row.short) fleet.run(["stop", row.short], "Stopped " + row.short)
   }
   function retry(row) { if (row.runId && row.ticket) fleet.run(["retry", row.runId, row.ticket], "Retrying #" + row.ticket) }
+  // A finished run leaves the panel; its orchestrator is stopped if it's still around.
+  function closeRun(run) { fleet.run(["close", run.id], "Closed " + run.name) }
   // A failed push toasts the daemon's reason, and GitTicks keeps showing it under the row.
   function push(path, target, remote) {
     if (!path) return

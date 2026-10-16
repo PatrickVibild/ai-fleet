@@ -66,6 +66,11 @@ ColumnLayout {
       SmallButton { text: "Abort"; tone: sec.fleet.red; font: sec.view.fontFamily; onClicked: { sec.fleet.run(["abort", sec.runId], "Aborted " + sec.run.name + ". Worktrees kept."); sec.view.confirmKill = "" } }
       SmallButton { text: "Keep"; tone: sec.view.dim; font: sec.view.fontFamily; onClicked: sec.view.confirmKill = "" }
     }
+    SmallButton {
+      visible: !!sec.run && ["done", "aborted"].indexOf(sec.run.status) >= 0
+      text: "✕ Close"; tone: sec.view.dim; font: sec.view.fontFamily
+      onClicked: sec.view.closeRun(sec.run)
+    }
   }
 
   // ---- ticket graph + legend

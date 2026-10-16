@@ -176,7 +176,7 @@ function rowFor(n, depth, extra) {
     mdTokens: md.tokens || 0, mdFiles: mdFiles(md, c.size),
     startedAt: n.startedAt || 0, endedAt: n.endedAt || 0, short: n.short || "", ticket: n.ticket || "",
     waitingFor: n.waitingFor || "", hasKids: (n.children || []).length > 0, expanded: false,
-    runId: "", lane: "", laneFirst: false, laneLast: false, activity: n.activity || ""
+    runId: "", lane: "", laneFirst: false, laneLast: false, activity: n.activity || "", alive: !!n.alive
   }
   for (var f in g) r[f] = g[f]
   for (var k in extra) r[k] = extra[k]
