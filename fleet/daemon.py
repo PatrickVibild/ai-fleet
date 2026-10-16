@@ -15,7 +15,7 @@ import subprocess
 import time
 import uuid
 
-from . import claude, config, git, memory, paths, skills
+from . import account, claude, config, git, memory, paths, skills
 from .runs import (ATTN, CONFLICT, KILLED, LIVE_RUN, MERGED, MERGING, READY, REVIEW, RUNNING, TESTING, WAIT,
                    Run, slug)
 
@@ -95,6 +95,8 @@ class Fleet:
         self.sudo = {}           # request id -> {..., future}
         self.last_state = ""
         self.last_view = 0.0     # when the panel last said someone is looking
+        self.live_usage = None   # (fetched at, windows) from Anthropic's usage endpoint
+        self.live_tried = 0.0
         self.listening = set()   # run ids some `fleet events <run> --follow` is following right now
         self.heard = {}          # run id -> when we last saw its orchestrator following it
         try:
@@ -115,7 +117,7 @@ class Fleet:
         server = await asyncio.start_unix_server(self._client, path=str(paths.SOCK))
         os.chmod(paths.SOCK, 0o600)
         loops = [self._every(2, self.poll), self._every(2, self.schedule), self._every(1, self.write_state),
-                 self._every(5, self.summarize)]
+                 self._every(5, self.summarize), self._every(5, self.refresh_usage)]
         async with server:
             await asyncio.gather(server.serve_forever(), *loops)
 
@@ -183,6 +185,7 @@ class Fleet:
             # The panel calls this every few seconds while it's open; AI summaries are only made then (pull, not push).
             if time.time() - self.last_view > 15:
                 self._last_sum = 0   # someone just opened the panel: summarize right away
+                self.live_tried = 0  # and fetch the account's usage fresh (a plan change shows up here)
             self.last_view = time.time()
             return {}
         if op == "events":
@@ -798,9 +801,21 @@ class Fleet:
             self.escalate(run, t, "spawn_failed", f"Couldn't resume the implementor: {e}")
 
     # ------------------------------------------------------------------ usage limit
+    async def refresh_usage(self):
+        """Ask Anthropic for the account's usage: every minute while the panel is open, every 5 otherwise."""
+        now = time.time()
+        if now - self.live_tried < (60 if now - self.last_view < 15 else 300):
+            return
+        self.live_tried = now
+        windows = await account.usage()
+        if windows:
+            self.live_usage = (time.time(), windows)
+            self._usage_at = 0
+
     def usage(self):
-        """The account's rate limits, from the freshest statusline input any session wrote, and whether they're hit.
-        Past `resets_at` a window counts as reset even if no session has reported since."""
+        """The account's rate limits, and whether they're hit: from Anthropic's usage endpoint when we asked it in
+        the last 10 minutes, else from the freshest statusline input any session wrote. Past `resets_at` a window
+        counts as reset even if no session has reported since."""
         now = time.time()
         if now - getattr(self, "_usage_at", 0) < 1:
             return self._usage
@@ -814,6 +829,9 @@ class Fleet:
                         newest, rl = mt, d["rate_limits"]
             except (OSError, json.JSONDecodeError):
                 pass
+        live = self.live_usage[1] if self.live_usage and now - self.live_usage[0] < 600 else None
+        if live:
+            rl = {k: {"used_percentage": w["used"], "resets_at": w["resetsAt"]} for k, w in live.items()}
         windows, until = {}, None
         for k in ("five_hour", "seven_day"):
             w = rl.get(k) or {}
