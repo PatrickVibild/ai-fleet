@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Statusline for fleet sessions: saves Claude Code's statusline input (exact context-window size and usage)
+# for the daemon, then hands off to your own statusline from ~/.claude/settings.json so attach looks normal.
+state="${AI_FLEET_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/ai-fleet}/statusline"
+input=$(cat)
+sid=$(jq -r '.session_id // empty' <<<"$input" 2>/dev/null)
+if [ -n "$sid" ]; then
+  mkdir -p "$state"
+  printf '%s' "$input" > "$state/$sid.json.tmp" && mv "$state/$sid.json.tmp" "$state/$sid.json"
+fi
+user_cmd=$(jq -r '.statusLine.command // empty' "$HOME/.claude/settings.json" 2>/dev/null)
+if [ -n "$user_cmd" ]; then
+  bash -c "$user_cmd" <<<"$input"
+else
+  echo "ai-fleet"
+fi

@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "patrick.ai-fleet",
+  "name": "Fleet",
+  "version": "0.1.0",
+  "author": "Patrick Vibild",
+  "license": "MIT",
+  "description": "Every Claude agent on the machine as a live tree: orchestrators, implementors, subagents, context, tokens, time, and what needs you.",
+  "kinds": ["bar-widget"],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Fleet",
+    "description": "Claude agent fleet: live agent tree, questions and approvals, run controls.",
+    "category": "AI",
+    "aliases": ["fleet", "claude", "agents-tree"],
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {},
+    "schema": []
+  }
+}
