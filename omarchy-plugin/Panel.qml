@@ -50,12 +50,9 @@ Panel {
 
   // ---- account usage limit: the daemon reads it from the statusline input of any session
   readonly property var usage: fleet.usage
-  readonly property var fiveHour: usage.five_hour || {}
   readonly property bool limited: !!usage.limited
   readonly property int limitStopped: usage.stopped || 0
   function clock(ts) { return ts ? Qt.formatTime(new Date(ts * 1000), "HH:mm") : "?" }
-  readonly property string usageText: fiveHour.used === undefined || fiveHour.used === null ? ""
-    : " · 5h limit " + fiveHour.used + "%" + (fiveHour.resetsAt ? " (resets " + clock(fiveHour.resetsAt) + ")" : "")
 
   function runById(id) {
     for (var i = 0; i < fleet.runs.length; i++) if (fleet.runs[i].id === id) return fleet.runs[i]
@@ -295,19 +292,26 @@ Panel {
               }
               Text {
                 text: {
-                  var agents = 0, tok = 0
-                  function walk(n) { if (U.hasCtx(n) && ["run", "attn", "wait"].indexOf(n.state) >= 0) agents++; tok += n.tokens || 0; (n.children || []).forEach(walk) }
+                  var agents = 0
+                  function walk(n) { if (U.hasCtx(n) && ["run", "attn", "wait"].indexOf(n.state) >= 0) agents++; (n.children || []).forEach(walk) }
                   root.fleet.runs.forEach(function(r) { if (r.tree) walk(r.tree) })
                   root.fleet.sessions.forEach(walk)
                   return agents + " agents live · " + root.implementorsRunning + "/" + (root.activeRuns.length * (root.fleet.limits.implementors_per_orchestrator || 0))
-                    + " implementors · " + root.ticketsDone + "/" + root.ticketsTotal + " merged · " + U.fmtTokens(tok) + " tokens"
-                    + root.usageText
+                    + " implementors · " + root.ticketsDone + "/" + root.ticketsTotal + " merged"
                 }
                 Layout.fillWidth: true
                 wrapMode: Text.Wrap
                 color: root.dim
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.bodySmall
+              }
+              // account usage, as in Claude Code's /usage: the 5-hour session window, then the week
+              RowLayout {
+                Layout.fillWidth: true
+                Layout.topMargin: Style.space(2)
+                spacing: Style.space(14)
+                UsageBar { Layout.fillWidth: true; Layout.preferredWidth: 1; label: "Session"; window: root.usage.five_hour || {}; view: root }
+                UsageBar { Layout.fillWidth: true; Layout.preferredWidth: 1; label: "Week"; window: root.usage.seven_day || {}; view: root }
               }
             }
             Stepper {
