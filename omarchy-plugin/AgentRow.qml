@@ -186,10 +186,12 @@ Item {
         maximumLineCount: 2
         elide: Text.ElideRight
       }
-      // the latest test run's counts: the daemon's own check, or the last test command the agent ran
+      // the latest test run's counts: the daemon's own check (live while it runs), or the last test command the agent ran
       RowLayout {
+        id: testLine
+        readonly property bool counting: r.live && r.row.kind === "check"
         Layout.fillWidth: true
-        visible: r.row.testTotal > 0
+        visible: r.row.testTotal > 0 || testLine.counting
         spacing: Style.space(8)
         Text {
           text: "✓ " + r.row.testPassed + " passed"
@@ -215,11 +217,33 @@ Item {
         Text {
           Layout.fillWidth: true
           Layout.minimumWidth: 0
-          text: "of " + r.row.testTotal + (r.row.kind !== "check" && r.row.testCmd !== "" ? " · " + r.row.testCmd : "")
+          text: !testLine.counting
+              ? "of " + r.row.testTotal + (r.row.kind !== "check" && r.row.testCmd !== "" ? " · " + r.row.testCmd : "")
+              : r.row.testExpected > 0
+                ? "· " + r.row.testTotal + " of " + r.row.testExpected + " run ("
+                  + Math.floor(100 * r.row.testTotal / r.row.testExpected) + "%)"
+                : "· " + r.row.testTotal + " run so far"
           elide: Text.ElideRight
           color: r.view.dim
           font.family: r.view.fontFamily
           font.pixelSize: Style.font.bodySmall
+        }
+      }
+      // progress against what the runner said it would run: passed, failed and skipped in their colors
+      Rectangle {
+        id: testBar
+        visible: testLine.counting && r.row.testExpected > 0
+        Layout.fillWidth: true
+        Layout.preferredHeight: Style.space(4)
+        Layout.topMargin: Style.space(1)
+        radius: height / 2
+        color: Qt.rgba(r.view.fg.r, r.view.fg.g, r.view.fg.b, 0.12)
+        readonly property real unit: r.row.testExpected > 0 ? width / Math.max(r.row.testExpected, r.row.testTotal) : 0
+        Row {
+          height: parent.height
+          Rectangle { width: r.row.testPassed * testBar.unit; height: parent.height; color: r.fleet.green }
+          Rectangle { width: r.row.testFailed * testBar.unit; height: parent.height; color: r.fleet.red }
+          Rectangle { width: r.row.testSkipped * testBar.unit; height: parent.height; color: r.view.dim }
         }
       }
       // your own session in a git repo, once it stops working: is the work merged, and is it pushed?

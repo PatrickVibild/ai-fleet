@@ -199,6 +199,8 @@ class Track:
                         self._test_result(tool[1], x.get("content"), ts)
 
     def _test_result(self, inp, content, ts):
+        if not testcounts.is_test_command(inp.get("command")):
+            return   # a grep or cat of old output isn't a test run
         text = content if isinstance(content, str) else "\n".join(
             c.get("text", "") for c in content or [] if isinstance(c, dict))
         found = testcounts.parse(text)
