@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import tempfile
@@ -7,7 +8,7 @@ from pathlib import Path
 
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 
-from fleet import config, memory, paths, skills, testcounts  # noqa: E402
+from fleet import claude, config, memory, paths, skills, testcounts  # noqa: E402
 from fleet.daemon import Fleet  # noqa: E402
 from fleet.runs import ATTN, CONFLICT, KILLED, MERGED, RUNNING, WAIT, Run  # noqa: E402
 from fleet.transcripts import SessionView, describe  # noqa: E402
@@ -248,6 +249,35 @@ class Skills(unittest.TestCase):
         self.assertIsNone(skills.missing("/mine"))
         self.assertIsNone(skills.missing("/implement"))
         self.assertIn("isn't an installed", skills.missing("/nope"))
+
+
+class Schedule(unittest.TestCase):
+    """The 2 s schedule loop and a submit can run schedule() at once; each ticket still starts once."""
+
+    def test_overlapping_schedules_start_each_ticket_once(self):
+        fleet = Fleet.__new__(Fleet)
+        fleet.cfg = {**config.DEFAULTS, "implementors_per_orchestrator": 4, "orchestrators": 1}
+        fleet.runs = {}
+        fleet.scheduling = asyncio.Lock()
+        fleet.usage = lambda: {"limited": False}
+        fleet.write_settings = lambda *a, **k: "/dev/null"
+        run = Run.from_plan({"repo": "/tmp/x", "base": "main", "tickets": [{"id": "1", "title": "A"},
+                                                                           {"id": "2", "title": "B"}]})
+        run.d["status"] = "active"
+        fleet.runs[run.id] = run
+        started = []
+
+        async def spawn_bg(**kw):
+            started.append(kw["worktree"])
+            await asyncio.sleep(0.01)   # the real spawn takes a moment, which lets the other schedule() in
+            return kw["session_id"][:8]
+        self.addCleanup(setattr, claude, "spawn_bg", claude.spawn_bg)
+        claude.spawn_bg = spawn_bg
+
+        async def both():
+            await asyncio.gather(fleet.schedule(), fleet.schedule())
+        asyncio.run(both())
+        self.assertEqual(sorted(started), [f"fleet-{run.d['name']}-1", f"fleet-{run.d['name']}-2"])
 
 
 class Stalls(unittest.TestCase):
