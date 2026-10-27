@@ -361,19 +361,23 @@ class Fleet:
         t["attn"] = None
         name = f"fleet-{slug(run.d['name'])}-{t['id']}" + (f"-r{t['attempt']}" if t["attempt"] > 1 else "")
         sid = str(uuid.uuid4())
+        wt = None
         try:
+            async with self.lock(run.d["repo"]):   # not mid-merge: cut from the base as its last merge left it
+                wt = await git.add_worktree(run.d["repo"], name, run.d["base"])
             short = await claude.spawn_bg(
-                cwd=run.d["repo"], prompt=prompt or self.implementor_prompt(run, t),
+                cwd=wt, prompt=prompt or self.implementor_prompt(run, t),
                 name=f"{run.d['name']} #{t['id']} implementor", settings=self.write_settings(run, "implementor", t["id"]),
-                session_id=sid, worktree=name, permission_mode=self.cfg["permission_mode"], model=self.cfg["model"] or None)
+                session_id=sid, permission_mode=self.cfg["permission_mode"], model=self.cfg["model"] or None)
         except RuntimeError as e:
+            if wt:
+                await git.remove_worktree(run.d["repo"], wt)
             t["state"] = ATTN
             t["attn"] = {"kind": "spawn_failed", "msg": f"Couldn't start the implementor: {e}"}
             run.event("attention", ticket=t["id"], kind="spawn_failed", detail=str(e))
             run.save()
             return
-        t["session"] = {"sessionId": None, "short": short, "worktree": f"{run.d['repo']}/.claude/worktrees/{name}",
-                        "started": time.time()}
+        t["session"] = {"sessionId": None, "short": short, "worktree": wt, "started": time.time()}
         self.log(run, t, f"implementor {short} started")
         run.event("started", ticket=t["id"], session=short)
         run.save()
@@ -688,6 +692,10 @@ class Fleet:
             token = re.search(r"--discard-unpushed (\S+)", out)
             if token and branch and await git.is_ancestor(run.d["repo"], branch, run.d["base"]):
                 rc, out = await claude.rm(s["short"], token.group(1))
+            if wt and os.path.isdir(wt):   # the daemon made it, so Claude Code may leave it behind
+                why = await git.remove_worktree(run.d["repo"], wt)
+                if why:
+                    out = why
             if wt and os.path.isdir(wt):
                 kept.append({"worktree": wt, "reason": out.strip().splitlines()[-1][:200] if out.strip() else "kept"})
         return kept
@@ -725,16 +733,20 @@ class Fleet:
         prompt = (f"`{run.d['base']}` fails its checks after {after}. Find the cause and fix it with the smallest change "
                   f"that keeps every ticket's intent. Check command: `{cmd}`. Output:\n```\n{tail(output)}\n```\n"
                   f"Run the check until it passes, then commit on this branch. Never push.")
+        wt = None
         try:
-            short = await claude.spawn_bg(cwd=run.d["repo"], prompt=prompt, name=f"{run.d['name']} fixer {n}",
+            wt = await git.add_worktree(run.d["repo"], name, run.d["base"])   # callers mostly hold the repo lock already
+            short = await claude.spawn_bg(cwd=wt, prompt=prompt, name=f"{run.d['name']} fixer {n}",
                                           settings=self.write_settings(run, "fixer", f"fix{n}"), session_id=sid,
-                                          worktree=name, permission_mode=self.cfg["permission_mode"], model=self.cfg["model"] or None)
+                                          permission_mode=self.cfg["permission_mode"], model=self.cfg["model"] or None)
         except RuntimeError as e:
+            if wt:
+                await git.remove_worktree(run.d["repo"], wt)
             run.d["problem"] = {"kind": "fixer_failed", "msg": f"Couldn't start a fixer: {e}"}
             run.save()
             return
         run.d["helpers"].append({"kind": "fixer", "sessionId": None, "short": short, "state": "run", "final": final,
-                                 "started": time.time(), "worktree": f"{run.d['repo']}/.claude/worktrees/{name}",
+                                 "started": time.time(), "worktree": wt,
                                  "cmd": cmd, "after": after})
         run.save()
 

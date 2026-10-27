@@ -494,8 +494,8 @@ class ClaudeMd(unittest.TestCase):
         self.assertEqual(memory.claude_md(None)["tokens"], 100)
 
 
-class MergedAndPushed(unittest.TestCase):
-    """The panel's two ticks for finished work, and the push behind the second one, against real git repos."""
+class GitRepo(unittest.TestCase):
+    """A throwaway repo on `main` with one commit, and helpers to drive it."""
 
     def setUp(self):
         import asyncio
@@ -533,6 +533,10 @@ class MergedAndPushed(unittest.TestCase):
 
     def push(self, path=None):
         return self.asyncio.run(self.git.push(path or self.repo, self.status(path)))
+
+
+class MergedAndPushed(GitRepo):
+    """The panel's two ticks for finished work, and the push behind the second one, against real git repos."""
 
     def test_merged_work_pushes_the_base_branch_and_ticks_both(self):
         self.remote()
@@ -618,6 +622,31 @@ class MergedAndPushed(unittest.TestCase):
         self.assertTrue(f.git_view(str(self.repo))["pushed"])
         with self.assertRaisesRegex(ValueError, "isn't a finished run"):
             self.asyncio.run(f.push(str(self.root)))
+
+
+class Worktrees(GitRepo):
+    """Tickets start from the local base branch as it is when they spawn, never from origin."""
+
+    def test_cut_from_the_local_base_with_unpushed_merges(self):
+        self.remote()
+        self.sh("git", "push", "-q", "-u", "origin", "main", cwd=self.repo)
+        self.commit("blocker-merged")   # local main is now ahead of origin/main
+        wt = self.asyncio.run(self.git.add_worktree(self.repo, "fleet-x-2", "main"))
+        self.assertEqual(Path(wt), self.repo / ".claude/worktrees/fleet-x-2")
+        self.assertEqual(self.sh("git", "rev-parse", "HEAD", cwd=wt), self.sh("git", "rev-parse", "main", cwd=self.repo))
+        self.assertEqual(self.sh("git", "branch", "--show-current", cwd=wt), "worktree-fleet-x-2")
+
+    def test_removed_only_when_clean_and_merged(self):
+        wt = self.asyncio.run(self.git.add_worktree(self.repo, "t1", "main"))
+        self.commit("work", cwd=wt)
+        self.assertIn("isn't merged", self.asyncio.run(self.git.remove_worktree(self.repo, wt)))
+        self.sh("git", "merge", "-q", "worktree-t1", cwd=self.repo)
+        (Path(wt) / "scratch.txt").write_text("left behind")
+        self.assertIn("untracked", self.asyncio.run(self.git.remove_worktree(self.repo, wt)))
+        os.remove(Path(wt) / "scratch.txt")
+        self.assertIsNone(self.asyncio.run(self.git.remove_worktree(self.repo, wt)))
+        self.assertFalse(Path(wt).exists())
+        self.assertNotIn("worktree-t1", self.sh("git", "branch", cwd=self.repo))
 
 
 if __name__ == "__main__":

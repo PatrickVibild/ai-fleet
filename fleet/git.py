@@ -61,6 +61,35 @@ async def merge(repo, branch, message):
     return False, False, out
 
 
+async def add_worktree(repo, name, base):
+    """Make `.claude/worktrees/<name>` on a new branch `worktree-<name>`, cut from the local `base` as it is now.
+    The daemon does this itself instead of `claude -w`, which cuts from the remote's default branch: a ticket must
+    start from the base branch with its blockers merged, not from origin or from where the run was submitted.
+    Returns the worktree's path. Raises RuntimeError with git's output on failure."""
+    path = os.path.join(str(repo), ".claude", "worktrees", name)
+    rc, out = await git(repo, "worktree", "add", "-q", "-b", f"worktree-{name}", path, f"refs/heads/{base}")
+    if rc != 0:
+        raise RuntimeError(f"git worktree add failed: {out[-400:]}")
+    return path
+
+
+async def remove_worktree(repo, path):
+    """Drop a worktree and its branch, but only when it is clean (no changes, no untracked files) and the branch is
+    merged into the checked-out base, so nothing can be lost. Returns None when removed, else why it was kept."""
+    branch = await current_branch(path)
+    rc, out = await git(path, "status", "--porcelain")
+    if rc != 0 or out:
+        return "has uncommitted or untracked files"
+    if branch and not await is_ancestor(repo, branch, "HEAD"):
+        return f"{branch} isn't merged into the base branch"
+    rc, out = await git(repo, "worktree", "remove", path)
+    if rc != 0:
+        return out.splitlines()[-1][:200] if out else "git worktree remove failed"
+    if branch:
+        await git(repo, "branch", "-d", branch)
+    return None
+
+
 async def is_ancestor(repo, a, b):
     rc, _ = await git(repo, "merge-base", "--is-ancestor", a, b)
     return rc == 0
