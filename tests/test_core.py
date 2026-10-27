@@ -356,6 +356,19 @@ class Stalls(unittest.TestCase):
         self.assertNotIn(self.run.id, [r["id"] for r in self.fleet.snapshot()["runs"]])
         self.assertNotIn("/tmp/x", self.fleet.git_targets())
 
+    def test_closing_a_run_whose_orchestrator_is_a_terminal_asks_it_to_exit(self):
+        import asyncio
+        import signal
+        from unittest import mock
+        self.fleet.questions, self.fleet.sudo, self.fleet.summaries, self.fleet.windows = {}, {}, {}, {}
+        self.fleet.gitinfo, self.fleet.pushes, self.fleet.listening = {}, {}, set()
+        self.run.d["status"], self.run.d["orchestrator"] = "done", "o1"
+        self.fleet.agents["o1"] = {"sessionId": "o1", "pid": 9, "kind": "interactive"}   # no `id` to `claude stop`
+        with mock.patch("os.kill") as kill:
+            asyncio.run(self.fleet.ctl({"action": "close", "run": self.run.id}))
+        kill.assert_called_once_with(9, signal.SIGTERM)
+        self.assertTrue(self.run.d["closed"])
+
 
     def test_a_running_check_shows_under_the_orchestrator_beside_its_ticket(self):
         import asyncio
@@ -440,6 +453,28 @@ class WakeOrchestrator(Stalls):
         self.run._last_judgment -= 60
         self.check([])
         self.assertEqual((self.spawned, self.stopped), ([], []))
+
+
+class StopFinishedOrchestrator(WakeOrchestrator):
+    """A done run's orchestrator is stopped once the work is merged and pushed; there's nothing left for it."""
+
+    def finish(self, pushed):
+        self.run.d["status"] = "done"
+        self.fleet.gitinfo = {self.run.d["repo"]: {"merged": True, "pushed": pushed}}
+        self.asyncio.run(self.fleet.stop_finished_orchestrators())
+
+    def test_stopped_once_pushed(self):
+        self.finish(pushed=False)
+        self.assertEqual(self.stopped, [])
+        self.finish(pushed=True)
+        self.assertEqual(self.stopped, ["o1"])
+        self.finish(pushed=True)   # resumed by you afterwards: stays
+        self.assertEqual(self.stopped, ["o1"])
+
+    def test_never_stops_your_terminal(self):
+        self.fleet.agents["o1"]["kind"] = "interactive"
+        self.finish(pushed=True)
+        self.assertEqual(self.stopped, [])
 
 
 class LiveUsage(unittest.TestCase):
@@ -647,6 +682,55 @@ class Worktrees(GitRepo):
         self.assertIsNone(self.asyncio.run(self.git.remove_worktree(self.repo, wt)))
         self.assertFalse(Path(wt).exists())
         self.assertNotIn("worktree-t1", self.sh("git", "branch", cwd=self.repo))
+
+
+class RepoHold(GitRepo):
+    """A merge paused on a dirty checkout resumes by itself once the checkout is clean."""
+
+    def test_released_once_the_checkout_is_clean(self):
+        fleet = Fleet.__new__(Fleet)
+        fleet.cfg = {**config.DEFAULTS}
+        fleet.runs = {}
+        fleet.usage = lambda: {"limited": False}
+        run = Run.from_plan({"repo": str(self.repo), "base": "main", "tickets": [{"id": "1", "title": "A"}]})
+        run.d["status"] = "active"
+        run.ticket("1")["state"] = MERGED
+        run.d["finalCheck"] = "done"
+        fleet.runs[run.id] = run
+        (self.repo / "one.txt").write_text("dirty")
+        fleet.hold(run, "Can't merge #1: dirty. Fix it, then resume the run.", "repo")
+        self.asyncio.run(fleet.schedule())
+        self.assertEqual(run.d["held"]["kind"], "repo")
+        self.sh("git", "checkout", "one.txt", cwd=self.repo)
+        self.asyncio.run(fleet.schedule())
+        self.assertIsNone(run.d["held"])
+
+
+class Popups(unittest.TestCase):
+    """A desktop popup for a "needs you" item closes once the item clears, e.g. a merge the orchestrator retried."""
+
+    def test_closed_when_the_item_clears_and_shown_again_if_it_returns(self):
+        import asyncio
+        from unittest import mock
+        from fleet import daemon
+        paths.STATE_JSON.parent.mkdir(parents=True, exist_ok=True)
+        fleet = Fleet.__new__(Fleet)
+        fleet.notified, fleet.popups, fleet.last_state = set(), {}, ""
+        usage = {"limited": False, "stopped": 0, "until": None, "five_hour": {}}
+        item = {"id": "r:46:merge_failed", "type": "merge_failed", "who": "#46", "msg": "The merger couldn't finish the merge."}
+        snaps = [[item], [item], [], [item]]
+        fleet.snapshot = lambda: {"attention": snaps.pop(0), "usage": usage}
+        ids = iter([7, 8])
+
+        async def notify_id(title, body):
+            return next(ids)
+        closed = []
+        with mock.patch.object(daemon, "notify_id", notify_id), \
+             mock.patch.object(daemon, "close_notification", closed.append):
+            for _ in range(4):
+                asyncio.run(fleet.write_state())
+        self.assertEqual(closed, [7])
+        self.assertEqual(fleet.popups, {"r:46:merge_failed": 8})
 
 
 if __name__ == "__main__":

@@ -5,10 +5,12 @@ Talks JSON lines over a unix socket (paths.SOCK). Every request is one line; eve
 Hook requests stay open until the daemon has an answer (a question answered, a verdict given).
 """
 import asyncio
+import contextlib
 import json
 import os
 import re
 import shlex
+import signal
 import socket
 import struct
 import subprocess
@@ -64,6 +66,27 @@ def notify(title, body, urgent=True):
         pass
 
 
+async def notify_id(title, body):
+    """An urgent notification whose id comes back, so close_notification can take it down later."""
+    try:
+        proc = await asyncio.create_subprocess_exec("notify-send", "-p", "-a", "AI Fleet", "-u", "critical", title, body,
+                                                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+        out, _ = await asyncio.wait_for(proc.communicate(), 5)
+        return int(out.strip())
+    except (FileNotFoundError, ValueError, asyncio.TimeoutError):
+        return None
+
+
+def close_notification(nid):
+    try:
+        subprocess.Popen(["gdbus", "call", "--session", "--dest", "org.freedesktop.Notifications",
+                          "--object-path", "/org/freedesktop/Notifications",
+                          "--method", "org.freedesktop.Notifications.CloseNotification", str(nid)],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    except FileNotFoundError:
+        pass
+
+
 def alive(a):
     """Whether a `claude agents` entry is a running session. Its `state` "done" only means the last turn finished
     (an idle background session waiting for you); a stopped one is "stopped" with no pid."""
@@ -101,6 +124,7 @@ class Fleet:
         self.verdicts = {}       # (run id, ticket id) -> Future
         self.summaries = {}      # node id -> sentence
         self.notified = set()
+        self.popups = {}         # attention id -> desktop notification id, closed once the item clears
         self.locks = {}
         self.sudo = {}           # request id -> {..., future}
         self.last_state = ""
@@ -320,6 +344,11 @@ class Fleet:
             live.append(r)
         limited = self.usage()["limited"]
         for r in live:
+            # a merge paused on a dirty or switched checkout picks up again once the checkout is fixed
+            if r.d["status"] == "active" and (r.d.get("held") or {}).get("kind") == "repo" and not await self.checkout_ok(r):
+                r.event("unheld")
+                self.release_repo_hold(r)
+                r.save()
             if r.d["status"] != "active" or r.d.get("held"):
                 continue
             if r.all_merged() and not r.d.get("finalCheck"):
@@ -603,6 +632,13 @@ class Fleet:
             return f"{repo} has uncommitted changes"
         return None
 
+    def release_repo_hold(self, run):
+        run.d["held"] = None
+        for t in run.tickets.values():
+            if t["state"] in (READY, MERGING):
+                t["state"] = READY
+                asyncio.create_task(self.merge_ticket(run, t))
+
     def hold(self, run, reason, kind="hold"):
         run.d["held"] = {"kind": kind, "reason": reason, "since": time.time()}
         run.event("held", reason=reason)
@@ -808,19 +844,18 @@ class Fleet:
             if run.d.get("finalCheck") == "error":
                 run.d["finalCheck"], run.d["problem"] = None, None
             if (run.d.get("held") or {}).get("kind") == "repo":
-                run.d["held"] = None
-                for t in run.tickets.values():
-                    if t["state"] in (READY, MERGING):
-                        t["state"] = READY
-                        asyncio.create_task(self.merge_ticket(run, t))
+                self.release_repo_hold(run)
         elif a == "abort":
             await self.abort(run)
         elif a == "close":
             if run.d["status"] not in ("done", "aborted"):
                 raise ValueError(f"{run.d['name']} is still {run.d['status']}; abort it first")
             orch = self.agents.get(run.d.get("orchestrator") or "")
-            if alive(orch):
-                await claude.stop(orch.get("id"))
+            if alive(orch) and orch.get("id"):
+                await claude.stop(orch["id"])
+            elif alive(orch):   # a terminal session has no `claude stop` id; ask it to exit
+                with contextlib.suppress(ProcessLookupError):
+                    os.kill(orch["pid"], signal.SIGTERM)
             run.d["closed"] = True   # off the panel; run.json and its events stay
         else:
             t = run.ticket(req["ticket"])
@@ -1001,9 +1036,26 @@ class Fleet:
             info = self.gitinfo[path] = await git.status(path, base) if os.path.isdir(path) else None
             if info and info["pushed"] and (self.pushes.get(path) or {}).get("state") == "failed":
                 del self.pushes[path]   # pushed some other way since
+        await self.stop_finished_orchestrators()
         for d in (self.gitinfo, self.pushes):
             for p in [p for p in d if p not in targets]:
                 del d[p]
+
+    async def stop_finished_orchestrators(self):
+        """A done run whose work is merged and pushed has nothing left for its orchestrator, so its idle background
+        session is stopped (once: if you resume it yourself, it stays). Your own terminal session is left alone."""
+        for r in self.runs.values():
+            if r.d["status"] != "done" or r.d.get("orchStopped"):
+                continue
+            info = self.gitinfo.get(r.d["repo"])
+            a = self.agents.get(r.d.get("orchestrator") or "") or {}
+            if not (info and info["merged"] and info["pushed"]) or not alive(a) or a.get("kind") != "background" \
+                    or a.get("status") == "busy":
+                continue
+            await claude.stop(a.get("id") or r.d["orchestrator"][:8])
+            r.d["orchStopped"] = True
+            r.event("orchestrator_stopped", session=a.get("id"))
+            r.save()
 
     async def push(self, path):
         """Push a finished run's base branch, or a session's work (its base branch once merged, else its branch).
@@ -1451,7 +1503,15 @@ class Fleet:
         for a in snap["attention"]:
             if a["id"] not in self.notified:
                 self.notified.add(a["id"])
-                notify(f"{a['who']}", a.get("msg") or a["type"])
+                self.popups[a["id"]] = await notify_id(f"{a['who']}", a.get("msg") or a["type"])
+        # an item that cleared (the orchestrator retried the merge, a question got answered) takes its popup
+        # with it, and pops up again if it comes back
+        live = {a["id"] for a in snap["attention"]}
+        for aid in [k for k in self.popups if k not in live]:
+            nid = self.popups.pop(aid)
+            self.notified.discard(aid)
+            if nid:
+                close_notification(nid)
         u = snap["usage"]
         if u["limited"] and ("limit", u["until"]) not in self.notified:
             self.notified.add(("limit", u["until"]))
