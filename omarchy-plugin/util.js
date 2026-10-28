@@ -171,7 +171,27 @@ function gitFields(g) {
   }
 }
 
-function rowFor(n, depth, extra) {
+// Running agents, shells and checks anywhere under `n`; skill rows are phases of their parent, not workers.
+function runningKids(n) {
+  var count = 0
+  ;(n.children || []).forEach(function(c) {
+    if (c.kind !== "skill" && c.state === "run") count++
+    else count += runningKids(c)
+  })
+  return count
+}
+
+// What the row's dot animates: "working" (busy itself), "waiting" (busy but only waiting on subagents),
+// "idle" (alive with nothing to do), or "" (done, killed, attn, or held: drawn by state alone).
+// Skill rows have no activity of their own, so they take their session's idleness.
+function pulseFor(n, parentIdle) {
+  if (n.state !== "run") return ""
+  if (runningKids(n) > 0) return "waiting"
+  if (n.activity === "idle" || (n.kind === "skill" && parentIdle)) return "idle"
+  return "working"
+}
+
+function rowFor(n, depth, extra, parentIdle) {
   var c = n.ctx || {}
   var md = n.claudeMd || {}
   var g = gitFields(n.git)
@@ -186,18 +206,20 @@ function rowFor(n, depth, extra) {
     runId: "", lane: "", laneFirst: false, laneLast: false, activity: n.activity || "", alive: !!n.alive,
     testTotal: tc.total || 0, testPassed: tc.passed || 0, testFailed: tc.failed || 0, testSkipped: tc.skipped || 0,
     testCmd: tc.cmd || "", testExpected: tc.expected || 0,
-    testEstimated: !!tc.estimated
+    testEstimated: !!tc.estimated,
+    pulse: pulseFor(n, parentIdle), runningKids: runningKids(n)
   }
   for (var f in g) r[f] = g[f]
   for (var k in extra) r[k] = extra[k]
   return r
 }
 
-function pushTree(out, n, depth, overrides, extra) {
-  var r = rowFor(n, depth, extra)
+function pushTree(out, n, depth, overrides, extra, parentIdle) {
+  var r = rowFor(n, depth, extra, parentIdle)
   r.expanded = r.hasKids && isExpanded(n, overrides)
   out.push(r)
-  if (r.expanded) (n.children || []).forEach(function(c) { pushTree(out, c, depth + 1, overrides, extra) })
+  var idle = n.activity ? n.activity === "idle" : !!parentIdle
+  if (r.expanded) (n.children || []).forEach(function(c) { pushTree(out, c, depth + 1, overrides, extra, idle) })
 }
 
 // One lane per child of the root (implementors, mergers, fixers); the root itself sits above the lanes.
@@ -210,7 +232,7 @@ function flattenRun(run, overrides, laneFor) {
   if (!root.expanded) return out
   ;(run.tree.children || []).forEach(function(child) {
     var start = out.length
-    pushTree(out, child, 1, overrides, { runId: run.id, lane: laneFor(child) })
+    pushTree(out, child, 1, overrides, { runId: run.id, lane: laneFor(child) }, run.tree.activity === "idle")
     out[start].laneFirst = true
     out[out.length - 1].laneLast = true
   })

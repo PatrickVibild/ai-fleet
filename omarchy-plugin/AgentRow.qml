@@ -19,6 +19,7 @@ Item {
   readonly property bool menuOpen: view.menuKey === row.key
   readonly property bool hot: hover.containsMouse || focused || menuOpen || row.state === "attn"
   readonly property bool live: row.state === "run"
+  readonly property string pulse: row.pulse || ""
 
   Component.onCompleted: view.rowItems[row.key] = r
   Component.onDestruction: if (view && view.rowItems[row.key] === r) delete view.rowItems[row.key]
@@ -109,40 +110,77 @@ Item {
       }
     }
 
+    // activity: a spinning arc while it works, a slow ripple while it only waits on subagents, still and
+    // dimmed when idle with nothing to do, a fast red ripple when it needs you
     Item {
+      id: dotBox
       Layout.preferredWidth: Style.space(10)
       Layout.preferredHeight: Style.font.body + 2
       Layout.alignment: Qt.AlignTop
       Rectangle {
         id: halo
         anchors.centerIn: dot
+        readonly property int period: r.row.state === "attn" ? 1100 : 2400
         width: dot.width; height: width; radius: width / 2
         color: "transparent"
-        border.color: dot.color
+        border.color: dot.border.color
         border.width: 1
-        visible: r.live || r.row.state === "attn"
+        visible: r.pulse === "waiting" || r.row.state === "attn"
         SequentialAnimation on scale {
           running: halo.visible
           loops: Animation.Infinite
-          NumberAnimation { from: 1; to: 2.6; duration: r.row.state === "attn" ? 1100 : 1700; easing.type: Easing.OutCubic }
+          NumberAnimation { from: 1; to: 2.6; duration: halo.period; easing.type: Easing.OutCubic }
         }
         SequentialAnimation on opacity {
           running: halo.visible
           loops: Animation.Infinite
-          NumberAnimation { from: 0.8; to: 0; duration: r.row.state === "attn" ? 1100 : 1700; easing.type: Easing.OutCubic }
+          NumberAnimation { from: 0.8; to: 0; duration: halo.period; easing.type: Easing.OutCubic }
+        }
+      }
+      Canvas {
+        id: spinner
+        anchors.centerIn: dot
+        width: Style.space(15); height: width
+        visible: r.pulse === "working"
+        readonly property color tone: r.stateColor()
+        onToneChanged: requestPaint()
+        onPaint: {
+          var ctx = getContext("2d")
+          ctx.reset()
+          ctx.lineWidth = 1.5
+          ctx.lineCap = "round"
+          ctx.strokeStyle = tone
+          ctx.beginPath()
+          ctx.arc(width / 2, height / 2, width / 2 - 1, 0, Math.PI * 0.6)
+          ctx.stroke()
+        }
+        RotationAnimator on rotation {
+          running: spinner.visible
+          loops: Animation.Infinite
+          from: 0; to: 360; duration: 900
         }
       }
       Rectangle {
         id: dot
         anchors.centerIn: parent
         readonly property bool dash: r.row.kind === "shell" || r.row.kind === "check"
+        readonly property bool hollow: r.row.state === "killed" || r.row.state === "blocked"
         width: dash ? Style.space(8) : Style.space(7)
         height: dash ? 2 : width
         radius: r.row.kind === "skill" || dash ? 1 : width / 2
         rotation: r.row.kind === "skill" ? 45 : 0
-        color: r.row.state === "killed" || r.row.state === "blocked" ? "transparent" : r.stateColor()
+        opacity: r.pulse === "idle" ? 0.45 : 1
+        color: hollow ? "transparent" : r.stateColor()
         border.color: r.stateColor()
-        border.width: r.row.state === "killed" || r.row.state === "blocked" ? 1.5 : 0
+        border.width: hollow ? 1.5 : 0
+      }
+      HoverHandler { id: dotHover }
+      PanelToolTip {
+        visible: dotHover.hovered && r.pulse !== ""
+        text: r.pulse === "working" ? "Working"
+            : r.pulse === "waiting" ? "Waiting on " + r.row.runningKids + (r.row.runningKids === 1 ? " subagent" : " subagents")
+            : "Idle · nothing to do"
+        fontFamily: r.view.fontFamily
       }
     }
 
