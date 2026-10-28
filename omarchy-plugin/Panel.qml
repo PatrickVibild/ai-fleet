@@ -23,6 +23,7 @@ Panel {
 
   // ---- view state that must survive state.json updates
   property var expandOverrides: ({})
+  property bool anyExpanded: false  // drives the header's Collapse all / Expand all toggle
   property string focusedKey: ""
   property string confirmKill: ""
   property bool typing: false
@@ -108,6 +109,7 @@ Panel {
     fleet.runs.forEach(function(r) { if (r.status !== "queued") runRows(r).forEach(function(x) { keys.push(x.key) }) })
     sess.forEach(function(x) { keys.push(x.key); rowIndex[x.key] = x })
     order = keys
+    anyExpanded = keys.some(function(k) { return rowIndex[k] && rowIndex[k].expanded })
     layoutChanged()
   }
   Connections { target: root.fleet; function onStateChanged() { root.rebuild() } }
@@ -115,6 +117,15 @@ Panel {
   function toggleExpand(key, current) {
     var o = Object.assign({}, expandOverrides)
     o[key] = !current
+    expandOverrides = o
+    rebuild()
+  }
+  // Every node with children in every run and session, so expanding reaches nested rows too.
+  function setAllExpanded(value) {
+    var o = Object.assign({}, expandOverrides)
+    function walk(n) { if ((n.children || []).length) o[n.id] = value; (n.children || []).forEach(walk) }
+    fleet.runs.forEach(function(r) { if (r.tree) walk(r.tree) })
+    fleet.sessions.forEach(walk)
     expandOverrides = o
     rebuild()
   }
@@ -312,6 +323,7 @@ Panel {
       onCloseRequested: root.menuRow ? root.closeMenu() : root.confirmKill !== "" ? root.confirmKill = "" : root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
       onTextKey: function(t) {
+        if (t === "z") return root.setAllExpanded(!root.anyExpanded)
         var row = root.focused()
         if (!row) return
         if (t === "o") root.openRow(row)
@@ -390,6 +402,12 @@ Panel {
               Layout.alignment: Qt.AlignTop
               label: "/implement each"; value: root.fleet.limits.implementors_per_orchestrator || 0; view: root
               onChange: function(v) { root.fleet.run(["limits", "--per", String(v)], "Max implementors per orchestrator: " + v) }
+            }
+            SmallButton {
+              Layout.alignment: Qt.AlignTop
+              text: root.anyExpanded ? "▸ Collapse all" : "▾ Expand all"; font: root.fontFamily
+              tone: root.dim; ink: root.surface
+              onClicked: root.setAllExpanded(!root.anyExpanded)
             }
             Row {
               Layout.alignment: Qt.AlignTop
@@ -540,7 +558,7 @@ Panel {
             Layout.bottomMargin: Style.space(4)
             Text {
               Layout.fillWidth: true
-              text: root.toastText !== "" ? root.toastText : "j/k move   l/h expand   o open in terminal   x kill   r retry   esc close"
+              text: root.toastText !== "" ? root.toastText : "j/k move   l/h expand   z all   o open in terminal   x kill   r retry   esc close"
               color: root.toastText !== "" ? (root.toastError ? root.fleet.red : root.fleet.accent) : root.dim
               elide: Text.ElideRight
               font.family: root.fontFamily
