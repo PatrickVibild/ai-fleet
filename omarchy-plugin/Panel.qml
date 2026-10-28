@@ -32,9 +32,7 @@ Panel {
   property var rowItems: ({})     // key -> AgentRow item, for scrolling the focused row into view
   signal layoutChanged()
 
-  readonly property int attentionCount: fleet.attention.length
-  readonly property int forgottenCount: fleet.sessions.filter(function(s) { return s.forgotten }).length
-  // bar icon: red when something needs you or an agent is over 350k context, then orange, green while
+  readonly property int attentionCount: fleet.attention.length  // bar icon: red when something needs you or an agent is over 350k context, then orange, green while
   // anything runs, gray when nothing does
   readonly property string worstBand: U.worstBand(fleet.runs.map(function(r) { return r.tree }).filter(Boolean).concat(fleet.sessions))
   readonly property color iconColor: attentionCount > 0 || worstBand === "hot" ? fleet.red
@@ -522,24 +520,6 @@ Panel {
             spacing: Style.space(8)
             Text { text: "YOUR SESSIONS"; color: root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.caption; font.letterSpacing: 2 }
             Rectangle { Layout.fillWidth: true; height: 1; color: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.1) }
-            // sessions left idle with no terminal (a `cl` you closed and forgot): stop them now, or on their own
-            SmallButton {
-              visible: root.forgottenCount > 0
-              text: "■ Stop " + root.forgottenCount + " forgotten"; font: root.fontFamily
-              tone: root.fleet.orange; ink: root.surface
-              onClicked: root.fleet.run(["stop-forgotten"], "Stopped forgotten sessions; claude --resume brings one back")
-            }
-            SmallButton {
-              readonly property int hours: root.fleet.limits.stop_forgotten_after_hours || 0
-              readonly property var steps: [0, 2, 8, 24]
-              text: "Auto-stop forgotten: " + (hours ? "after " + hours + "h" : "off"); font: root.fontFamily
-              tone: hours ? root.fg : root.dim
-              onClicked: {
-                var next = steps[(steps.indexOf(hours) + 1) % steps.length]
-                root.fleet.run(["limits", "--stop-forgotten-after", String(next)],
-                               next ? "Forgotten sessions stop on their own after " + next + "h" : "Forgotten sessions are never stopped on their own")
-              }
-            }
           }
           ColumnHeader {
             Layout.fillWidth: true

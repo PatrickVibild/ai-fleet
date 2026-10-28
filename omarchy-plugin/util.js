@@ -214,7 +214,7 @@ function rowFor(n, depth, extra, parentIdle) {
     testCmd: tc.cmd || "", testExpected: tc.expected || 0,
     testEstimated: !!tc.estimated,
     pulse: pulseFor(n, parentIdle), runningKids: runningKids(n),
-    forgotten: !!n.forgotten, idleFor: n.idleFor || 0
+    inactiveFor: n.inactiveFor || 0, detached: !!n.detached
   }
   for (var f in g) r[f] = g[f]
   for (var k in extra) r[k] = extra[k]

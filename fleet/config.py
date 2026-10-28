@@ -16,8 +16,7 @@ DEFAULTS = {
     "fix_rounds": 3,
     "verdict_timeout_sec": 600,
     "stall_sec": 300,  # a fleet session with no reply from the model this long after starting needs you
-    "forgotten_after_min": 30,  # one of your background sessions idle this long with no terminal attached is "forgotten"
-    "stop_forgotten_after_hours": 0,  # stop forgotten sessions after this long on their own; 0 = never
+    "inactive_after_min": 30,  # one of your sessions idle this long gets an "inactive for …" label
     "roles": {
         # skill name (namespace stripped) -> name shown in the panel
         "tdd": "tester",

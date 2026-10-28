@@ -22,14 +22,12 @@ no new tickets start, and a banner shows up. Once the limit resets, click **▶ 
 run `fleet continue`). This resumes every background session the limit stopped. Interactive sessions can't be
 resumed this way, so type `continue` in their terminal.
 
-## Forgotten sessions
+## Inactive sessions
 
 A `fleet cc` session keeps running after you close its terminal, which makes it easy to forget. Once one of
-your background sessions has sat idle for `forgotten_after_min` (30) with no `claude attach` showing it, its
-row gets an orange **forgotten** pill, and the YOUR SESSIONS header offers **■ Stop N forgotten** (or run
-`fleet stop-forgotten`). **Auto-stop forgotten** in the same header (or `fleet limits --stop-forgotten-after
-HOURS`) stops them on their own after 2, 8 or 24 hours, with a notification. Off by default. A stopped session
-keeps its transcript, so `claude --resume` brings it back. A run's sessions are never touched.
+your sessions has sat idle for `inactive_after_min` (30), its row gets an orange **inactive 22h** pill, with
+**· no terminal** when no `claude attach` is showing it. Nothing is stopped for you: right-click → Kill (or
+`x`) when you're done with it.
 
 ## Merged and pushed
 

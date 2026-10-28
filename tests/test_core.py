@@ -477,25 +477,16 @@ class StopFinishedOrchestrator(WakeOrchestrator):
         self.assertEqual(self.stopped, [])
 
 
-class ForgottenSessions(unittest.TestCase):
-    """Your background sessions left idle with no terminal are stopped on request; a run's sessions never are."""
+class InactiveSessions(unittest.TestCase):
+    """Your idle sessions say how long they've been inactive, and whether a terminal is showing them."""
 
     def setUp(self):
-        from fleet import claude
         self.projects = Path(tempfile.mkdtemp())
         self.addCleanup(setattr, paths, "CLAUDE_PROJECTS", paths.CLAUDE_PROJECTS)
         paths.CLAUDE_PROJECTS = self.projects
         (self.projects / "-repo").mkdir()
-        self.stopped = []
-
-        async def stop(short):
-            self.stopped.append(short)
-        self.addCleanup(setattr, claude, "stop", claude.stop)
-        claude.stop = stop
         self.fleet = Fleet.__new__(Fleet)
-        self.fleet.cfg = dict(config.DEFAULTS)
-        self.fleet.views, self.fleet.runs = {}, {}
-        self.fleet.attached, self.fleet.seen_attached = set(), {}
+        self.fleet.views, self.fleet.runs, self.fleet.attached = {}, {}, set()
         run = Run.from_plan({"repo": "/tmp/x", "base": "main", "tickets": [{"id": "1", "title": "A"}]})
         run.d["orchestrator"] = "o1"
         self.fleet.runs[run.id] = run
@@ -507,29 +498,26 @@ class ForgottenSessions(unittest.TestCase):
             json.dumps(entry("assistant", stamp, [{"type": "text", "text": "done"}], id="u")) + "\n")
         v = self.fleet.views["u1"] = SessionView("u1")
         v.poll()
-
-    def stop(self):
-        import asyncio
-        return asyncio.run(self.fleet.stop_forgotten(30 * 60))
-
-    def test_stops_your_idle_detached_session_only(self):
-        self.assertEqual(self.stop(), ["u1 (u1)"])
-        self.assertEqual(self.stopped, ["u1"])   # the run's orchestrator o1 is idle and detached too, and left alone
-
-    def test_left_alone_while_on_screen_or_busy(self):
-        for change in ({"attached": {"u1"}}, {"seen_attached": {"u1": time.time() - 60}}):
-            self.fleet.attached, self.fleet.seen_attached = set(), {}
-            for k, v in change.items():
-                setattr(self.fleet, k, v)
-            self.assertEqual(self.stop(), [])
-        self.fleet.attached, self.fleet.seen_attached = set(), {}
-        for agent in ({"status": "busy"}, {"status": "waiting"}, {"kind": "interactive"}):
-            self.fleet.agents["u1"].update({"status": "idle", "kind": "background", **agent})
-            self.assertEqual(self.stop(), [])
-        self.assertEqual(self.stopped, [])
+        self.u1 = self.fleet.agents["u1"]
 
     def test_counts_from_the_last_transcript_line(self):
-        self.assertGreater(self.fleet.idle_detached("u1", self.fleet.agents["u1"]), 6900)
+        self.assertAlmostEqual(self.fleet.idle_for("u1", self.u1), 7000, delta=60)
+
+    def test_not_inactive_while_working_or_waiting_on_you(self):
+        for status in ("busy", "waiting"):
+            self.u1["status"] = status
+            self.assertIsNone(self.fleet.idle_for("u1", self.u1))
+
+    def test_detached_only_for_a_background_session_no_terminal_shows(self):
+        self.assertTrue(self.fleet.detached(self.u1))
+        self.fleet.attached = {"u1"}
+        self.assertFalse(self.fleet.detached(self.u1))
+        self.u1["kind"] = "interactive"
+        self.fleet.attached = set()
+        self.assertFalse(self.fleet.detached(self.u1))
+
+    def test_a_runs_sessions_are_not_yours(self):
+        self.assertEqual(list(self.fleet.my_sessions()), ["u1"])
 
 
 class LiveUsage(unittest.TestCase):
