@@ -101,6 +101,25 @@ def proc_ppid(pid):
         return 0
 
 
+def tty_session(pid):
+    """The process a terminal started for `pid` (its shell, or the command given with -e): the leader of pid's
+    session, if that session has a terminal. Hanging it up closes just that window or tab. None otherwise."""
+    try:
+        sid = os.getsid(pid)
+        with open(f"/proc/{sid}/stat") as f:
+            tty = int(f.read().rsplit(")", 1)[1].split()[4])
+    except (OSError, ValueError, IndexError):
+        return None
+    return sid if tty and sid > 1 and sid != os.getsid(0) else None
+
+
+def close_terminals(sids):
+    """SIGHUP, as a terminal sends when you close it: the shell exits, and the terminal with it."""
+    for sid in sids:
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(sid, signal.SIGHUP)
+
+
 class Question:
     def __init__(self, run, ticket, session, tool_use_id, tool_input):
         self.id = "q" + uuid.uuid4().hex[:8]
@@ -264,9 +283,9 @@ class Fleet:
         return run.id in self.listening or alive(self.agents.get(sid)) or bool(v and v.main)
 
     @staticmethod
-    def attached_shorts():
-        """Short ids of background sessions a `claude attach <id>` process is showing in a terminal."""
-        out = set()
+    def attach_procs():
+        """(pid, short id) of each `claude attach <id>` process showing a background session in a terminal."""
+        out = []
         for p in os.listdir("/proc"):
             if not p.isdigit():
                 continue
@@ -276,8 +295,11 @@ class Fleet:
             except OSError:
                 continue
             if len(argv) >= 3 and os.path.basename(argv[0]) == "claude" and argv[1] == "attach":
-                out.add(argv[2])
+                out.append((int(p), argv[2]))
         return out
+
+    def attached_shorts(self):
+        return {short for _, short in self.attach_procs()}
 
     @staticmethod
     def listeners():
@@ -850,13 +872,20 @@ class Fleet:
             short = req["session"]
             agent = next((x for x in self.agents.values() if alive(x) and (x.get("id") == short or (
                 not x.get("id") and str(x.get("sessionId", "")).startswith(short)))), None)
-            if agent and not agent.get("id"):   # claude in a terminal has no `claude stop` id; ask it to exit
-                with contextlib.suppress(ProcessLookupError):
-                    os.kill(agent["pid"], signal.SIGTERM)
-                return {}
-            rc, out = await claude.stop(short)
-            if rc != 0:
-                raise ValueError(out.strip()[-300:] or f"claude stop {short} failed")
+            # the terminals showing it close too, rather than leaving an empty shell behind
+            terminals = {tty_session(pid) for pid, s in self.attach_procs() if s == short}
+            if agent and not agent.get("id"):   # claude in a terminal has no `claude stop` id; hang up its terminal
+                term = tty_session(agent["pid"])
+                if term:
+                    terminals.add(term)
+                else:
+                    with contextlib.suppress(ProcessLookupError):
+                        os.kill(agent["pid"], signal.SIGTERM)
+            else:
+                rc, out = await claude.stop(short)
+                if rc != 0:
+                    raise ValueError(out.strip()[-300:] or f"claude stop {short} failed")
+            close_terminals(terminals - {None})
             return {}
         if a == "continue":
             return await self.continue_limited(req.get("note"))

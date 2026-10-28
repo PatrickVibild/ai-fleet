@@ -369,15 +369,57 @@ class Stalls(unittest.TestCase):
         kill.assert_called_once_with(9, signal.SIGTERM)
         self.assertTrue(self.run.d["closed"])
 
-    def test_killing_your_terminal_session_asks_it_to_exit(self):
+    def kill_session(self, short, terminals, attached=()):
         import asyncio
+        from unittest import mock
+
+        async def stop(s):
+            return 0, ""
+        self.fleet.attach_procs = lambda: list(attached)
+        with mock.patch("os.kill") as kill, mock.patch("fleet.claude.stop", side_effect=stop) as stopped, \
+                mock.patch("fleet.daemon.tty_session", side_effect=lambda pid: terminals.get(pid)):
+            asyncio.run(self.fleet.ctl({"action": "kill-session", "session": short}))
+        return kill, stopped
+
+    def test_killing_your_terminal_session_closes_its_terminal(self):
         import signal
         from unittest import mock
         self.fleet.agents["388d88fc-aaaa"] = {"sessionId": "388d88fc-aaaa", "pid": 42, "kind": "interactive"}
-        with mock.patch("os.kill") as kill, mock.patch("fleet.claude.stop") as stop:
-            asyncio.run(self.fleet.ctl({"action": "kill-session", "session": "388d88fc"}))
-        kill.assert_called_once_with(42, signal.SIGTERM)
+        kill, stop = self.kill_session("388d88fc", {42: 40})   # bash 40, started by the terminal, runs claude 42
+        self.assertEqual(kill.call_args_list, [mock.call(40, signal.SIGHUP)])
         stop.assert_not_called()
+        kill, stop = self.kill_session("388d88fc", {})          # no terminal found: just ask claude to exit
+        self.assertEqual(kill.call_args_list, [mock.call(42, signal.SIGTERM)])
+
+    def test_killing_a_cl_stops_it_and_closes_the_terminals_showing_it(self):
+        import signal
+        from unittest import mock
+        self.fleet.agents["cl1"] = {"sessionId": "cl1-full", "pid": 50, "id": "cl1", "kind": "background"}
+        kill, stop = self.kill_session("cl1", {61: 60, 71: 71}, attached=[(61, "cl1"), (71, "cl1"), (81, "other")])
+        stop.assert_called_once_with("cl1")
+        self.assertCountEqual(kill.call_args_list, [mock.call(60, signal.SIGHUP), mock.call(71, signal.SIGHUP)])
+
+    def test_tty_session_is_the_process_the_terminal_started(self):
+        import pty
+        import signal
+        import subprocess
+        from fleet.daemon import tty_session
+        pid, fd = pty.fork()
+        if pid == 0:   # child: session leader on a fresh terminal, like a shell in a new window
+            os.execvp("sleep", ["sleep", "5"])
+        self.addCleanup(os.close, fd)
+        self.addCleanup(os.waitpid, pid, 0)
+        self.addCleanup(os.kill, pid, signal.SIGKILL)
+        for _ in range(200):   # until the child has taken its terminal and become sleep
+            if Path(f"/proc/{pid}/cmdline").read_bytes().startswith(b"sleep"):
+                break
+            time.sleep(0.01)
+        self.assertEqual(tty_session(pid), pid)
+        bg = subprocess.Popen(["sleep", "5"], start_new_session=True, stdin=subprocess.DEVNULL,
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.addCleanup(bg.wait)
+        self.addCleanup(bg.kill)
+        self.assertIsNone(tty_session(bg.pid))   # no terminal: nothing to close
 
 
     def test_a_running_check_shows_under_the_orchestrator_beside_its_ticket(self):
