@@ -847,7 +847,16 @@ class Fleet:
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
             return {}
         if a == "kill-session":
-            await claude.stop(req["session"])
+            short = req["session"]
+            agent = next((x for x in self.agents.values() if alive(x) and (x.get("id") == short or (
+                not x.get("id") and str(x.get("sessionId", "")).startswith(short)))), None)
+            if agent and not agent.get("id"):   # claude in a terminal has no `claude stop` id; ask it to exit
+                with contextlib.suppress(ProcessLookupError):
+                    os.kill(agent["pid"], signal.SIGTERM)
+                return {}
+            rc, out = await claude.stop(short)
+            if rc != 0:
+                raise ValueError(out.strip()[-300:] or f"claude stop {short} failed")
             return {}
         if a == "continue":
             return await self.continue_limited(req.get("note"))

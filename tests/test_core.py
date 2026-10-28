@@ -369,6 +369,16 @@ class Stalls(unittest.TestCase):
         kill.assert_called_once_with(9, signal.SIGTERM)
         self.assertTrue(self.run.d["closed"])
 
+    def test_killing_your_terminal_session_asks_it_to_exit(self):
+        import asyncio
+        import signal
+        from unittest import mock
+        self.fleet.agents["388d88fc-aaaa"] = {"sessionId": "388d88fc-aaaa", "pid": 42, "kind": "interactive"}
+        with mock.patch("os.kill") as kill, mock.patch("fleet.claude.stop") as stop:
+            asyncio.run(self.fleet.ctl({"action": "kill-session", "session": "388d88fc"}))
+        kill.assert_called_once_with(42, signal.SIGTERM)
+        stop.assert_not_called()
+
 
     def test_a_running_check_shows_under_the_orchestrator_beside_its_ticket(self):
         import asyncio
