@@ -67,7 +67,10 @@ def cmd_status(a):
     if st["sessions"]:
         print("\nyour sessions:")
         for s in st["sessions"]:
-            print(f"  {s['short']}  {s['state']:<5} {s['tag']}  {s['status']}")
+            forgotten = f"  [forgotten: idle {s['idleFor'] / 3600:.1f}h, no terminal]" if s.get("forgotten") else ""
+            print(f"  {s['short']}  {s['state']:<5} {s['tag']}  {s['status']}{forgotten}")
+        if any(s.get("forgotten") for s in st["sessions"]):
+            print("  (fleet stop-forgotten stops them)")
 
 
 def cmd_submit(a):
@@ -142,6 +145,8 @@ def cmd_limits(a):
         req["implementors_per_orchestrator"] = a.per
     if a.summaries:
         req["summaries"] = a.summaries
+    if a.stop_forgotten_after is not None:
+        req["stop_forgotten_after_hours"] = a.stop_forgotten_after
     call(req)
     lim = call({"op": "state"})["state"]["limits"]
     print(f"{lim['orchestrators']} orchestrators × {lim['implementors_per_orchestrator']} implementors each")
@@ -229,6 +234,9 @@ def main():
     s.add_argument("--orchestrators", type=int)
     s.add_argument("--per", type=int, help="implementors per orchestrator")
     s.add_argument("--summaries", choices=["tool", "ai"])
+    s.add_argument("--stop-forgotten-after", type=int, metavar="HOURS",
+                   help="stop your sessions left idle with no terminal this long on their own (0 = never)")
+    sub.add_parser("stop-forgotten", help="stop your sessions left idle with no terminal attached")
     s = sub.add_parser("cc", help="start a background Claude session here and attach to it")
     s.add_argument("prompt", nargs="*")
     s.add_argument("-n", "--name")
@@ -265,6 +273,9 @@ def main():
         cmd_push(a)
     elif a.cmd == "limits":
         cmd_limits(a)
+    elif a.cmd == "stop-forgotten":
+        r = call({"op": "ctl", "action": "stop-forgotten"}, timeout=120)
+        print(f"stopped {len(r['stopped'])}: {', '.join(r['stopped']) or '-'}")
     elif a.cmd == "cc":
         cmd_cc(a)
     elif a.cmd == "sudo-answer":

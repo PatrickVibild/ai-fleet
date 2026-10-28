@@ -212,6 +212,7 @@ Item {
         Pill { visible: r.row.state === "attn"; text: "needs you"; tone: r.fleet.red; font: r.view.fontFamily }
         Pill { visible: r.row.state === "done" && r.row.depth <= 1 && r.row.kind !== "check"; text: "done"; tone: r.fleet.green; font: r.view.fontFamily }
         Pill { visible: r.row.state === "killed"; text: "killed"; tone: r.view.dim; font: r.view.fontFamily }
+        Pill { visible: r.row.forgotten; text: "forgotten · idle " + U.fmtSpan(r.row.idleFor) + ", no terminal"; tone: r.fleet.orange; font: r.view.fontFamily }
         Pill { visible: r.row.note !== ""; text: r.row.note; tone: r.row.kind !== "check" ? r.fleet.magenta : r.row.note === "red" ? r.fleet.red : r.row.note === "green" ? r.fleet.green : r.fleet.cyan; font: r.view.fontFamily }
       }
       Text {

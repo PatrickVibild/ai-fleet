@@ -120,6 +120,8 @@ class Fleet:
         self.runs = {r.id: r for r in Run.load_all()}
         self.views = {}          # sessionId -> SessionView
         self.agents = {}         # sessionId -> `claude agents` entry
+        self.attached = set()    # short ids some `claude attach` is showing in a terminal right now
+        self.seen_attached = {}  # sessionId -> when a terminal was last attached to it
         self.questions = {}      # qid -> Question
         self.verdicts = {}       # (run id, ticket id) -> Future
         self.summaries = {}      # node id -> sentence
@@ -212,6 +214,8 @@ class Fleet:
                     self.cfg[k] = max(1, min(16, int(req[k])))
             if req.get("summaries") in ("tool", "ai"):
                 self.cfg["summaries"] = req["summaries"]
+            if "stop_forgotten_after_hours" in req:
+                self.cfg["stop_forgotten_after_hours"] = max(0, min(168, int(req["stop_forgotten_after_hours"])))
             config.save(self.cfg)
             return {}
         if op == "sudo":
@@ -261,6 +265,22 @@ class Fleet:
             return False
         v = self.views.get(sid)
         return run.id in self.listening or alive(self.agents.get(sid)) or bool(v and v.main)
+
+    @staticmethod
+    def attached_shorts():
+        """Short ids of background sessions a `claude attach <id>` process is showing in a terminal."""
+        out = set()
+        for p in os.listdir("/proc"):
+            if not p.isdigit():
+                continue
+            try:
+                with open(f"/proc/{p}/cmdline", "rb") as f:
+                    argv = f.read().decode(errors="replace").split("\0")
+            except OSError:
+                continue
+            if len(argv) >= 3 and os.path.basename(argv[0]) == "claude" and argv[1] == "attach":
+                out.add(argv[2])
+        return out
 
     @staticmethod
     def listeners():
@@ -832,6 +852,8 @@ class Fleet:
         if a == "kill-session":
             await claude.stop(req["session"])
             return {}
+        if a == "stop-forgotten":
+            return {"stopped": await self.stop_forgotten(self.cfg["forgotten_after_min"] * 60)}
         if a == "continue":
             return await self.continue_limited(req.get("note"))
         if a == "push":
@@ -1020,13 +1042,37 @@ class Fleet:
         for r in self.runs.values():
             if r.d["status"] == "done" and not r.d.get("closed") and time.time() - r.d.get("created", 0) <= 6 * 3600:
                 out[r.d["repo"]] = r.d["base"]
+        for sid, a in self.my_sessions().items():
+            if a.get("cwd"):
+                out.setdefault(a["cwd"], None)
+        return out
+
+    def my_sessions(self):
+        """Your own live sessions (a `cl` / `fleet cc` one, or claude in a terminal): not a run's, not the daemon's."""
         fleet = {r.d.get("orchestrator") for r in self.runs.values()} \
             | {s.get("sessionId") for r in self.runs.values() for s in r.sessions()}
-        for sid, a in self.agents.items():
-            cwd = a.get("cwd")
-            if sid not in fleet and alive(a) and cwd and not str(cwd).startswith(str(paths.STATE)):
-                out.setdefault(cwd, None)
-        return out
+        return {sid: a for sid, a in self.agents.items()
+                if sid not in fleet and alive(a) and not str(a.get("cwd", "")).startswith(str(paths.STATE))}
+
+    def idle_detached(self, sid, a):
+        """Seconds a background session has sat idle with no terminal attached, counted from its last transcript
+        line or the last time a terminal showed it; None while it works, waits on you, or is on screen."""
+        if a.get("kind") != "background" or a.get("status") != "idle" or a.get("id") in self.attached:
+            return None
+        v = self.views.get(sid)
+        last = v.main.last_ts if v and v.main else None
+        return time.time() - max(last or 0, self.seen_attached.get(sid, 0), (a.get("startedAt") or 0) / 1000)
+
+    async def stop_forgotten(self, older_than):
+        """Stop your sessions that have sat idle and detached at least `older_than` seconds; returns their names.
+        A stopped session keeps its transcript, so `claude --resume` brings it back."""
+        stopped = []
+        for sid, a in self.my_sessions().items():
+            idle = self.idle_detached(sid, a)
+            if idle is not None and idle >= older_than and a.get("id"):
+                await claude.stop(a["id"])
+                stopped.append(f"{a.get('name') or a['id']} ({a['id']})")
+        return stopped
 
     async def refresh_git(self):
         targets = self.git_targets()
@@ -1118,6 +1164,10 @@ class Fleet:
     async def poll(self):
         agents = await claude.agents(include_done=True)
         self.agents = {a.get("sessionId"): a for a in agents if a.get("sessionId")}
+        self.attached = self.attached_shorts()
+        for sid, a in self.agents.items():
+            if a.get("id") in self.attached:
+                self.seen_attached[sid] = time.time()
         by_short = {a.get("id"): a.get("sessionId") for a in agents if a.get("id")}
         for r in self.runs.values():   # learn the real session id behind each short id
             changed = False
@@ -1163,6 +1213,13 @@ class Fleet:
                     self.escalate(r, t, "session_ended", "The implementor's session ended before the ticket was done.")
         self.check_stalls()
         await self.check_orchestrators()
+        hours = self.cfg["stop_forgotten_after_hours"]
+        if hours > 0:
+            stopped = await self.stop_forgotten(hours * 3600)
+            if stopped:
+                notify("Stopped forgotten Claude sessions",
+                       f"Idle {hours:g}h with no terminal: {', '.join(stopped)}. `claude --resume` brings one back.",
+                       urgent=False)
 
     async def check_orchestrators(self):
         """Wake an orchestrator that missed events: its Monitor expired, or it ended its turn (a usage limit)."""
@@ -1481,13 +1538,17 @@ class Fleet:
             if sid in fleet_sids or not alive(a) or str(a.get("cwd", "")).startswith(str(paths.STATE)):
                 continue
             cwd = str(a.get("cwd", "")).replace(str(paths.HOME), "~", 1)
+            idle = self.idle_detached(sid, a)
+            forgotten = idle is not None and idle >= self.cfg["forgotten_after_min"] * 60
             sessions.append(self.session_node(sid, "session", "claude", cwd,
-                                              extra={"label": a.get("name"), "git": self.git_view(a.get("cwd"))}))
+                                              extra={"label": a.get("name"), "git": self.git_view(a.get("cwd")),
+                                                     "forgotten": forgotten, "idleFor": idle or 0}))
         for n in [*(r.get("tree") for r in runs_out if r.get("tree")), *sessions]:
             self._collect_permission(n, attention)
         return {"updated": time.time(), "daemon": os.getpid(),
                 "limits": {"orchestrators": self.cfg["orchestrators"],
-                           "implementors_per_orchestrator": self.cfg["implementors_per_orchestrator"]},
+                           "implementors_per_orchestrator": self.cfg["implementors_per_orchestrator"],
+                           "stop_forgotten_after_hours": self.cfg["stop_forgotten_after_hours"]},
                 "summaries": self.cfg["summaries"], "usage": self.usage(), "attention": attention, "runs": runs_out, "sessions": sessions}
 
     def _collect_permission(self, n, out):

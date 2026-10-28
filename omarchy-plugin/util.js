@@ -48,6 +48,12 @@ function fmtDuration(sec) {
   return h ? h + ":" + pad(m) + ":" + pad(s) : m + ":" + pad(s)
 }
 
+// "45m", "22h", "3d": how long, roughly
+function fmtSpan(sec) {
+  sec = Math.max(0, sec || 0)
+  return sec < 3600 ? Math.floor(sec / 60) + "m" : sec < 172800 ? Math.floor(sec / 3600) + "h" : Math.floor(sec / 86400) + "d"
+}
+
 function elapsed(node, nowSec) {
   if (!node || !node.startedAt) return ""
   var end = node.endedAt || nowSec
@@ -207,7 +213,8 @@ function rowFor(n, depth, extra, parentIdle) {
     testTotal: tc.total || 0, testPassed: tc.passed || 0, testFailed: tc.failed || 0, testSkipped: tc.skipped || 0,
     testCmd: tc.cmd || "", testExpected: tc.expected || 0,
     testEstimated: !!tc.estimated,
-    pulse: pulseFor(n, parentIdle), runningKids: runningKids(n)
+    pulse: pulseFor(n, parentIdle), runningKids: runningKids(n),
+    forgotten: !!n.forgotten, idleFor: n.idleFor || 0
   }
   for (var f in g) r[f] = g[f]
   for (var k in extra) r[k] = extra[k]
