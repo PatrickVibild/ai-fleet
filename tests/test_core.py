@@ -4,6 +4,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 
@@ -826,6 +827,101 @@ class Popups(unittest.TestCase):
                 asyncio.run(fleet.write_state())
         self.assertEqual(closed, [7])
         self.assertEqual(fleet.popups, {"r:46:merge_failed": 8})
+
+
+class Phone(unittest.TestCase):
+    """Pushes to your phone through ntfy: one POST per push, never retried, never blocking the daemon."""
+
+    def setUp(self):
+        import http.server
+        import threading
+        got = self.got = []
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                got.append((self.path, json.loads(self.rfile.read(int(self.headers["Content-Length"])))))
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b"{}")
+
+            def log_message(self, *a):
+                pass
+        self.httpd = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+        self.addCleanup(self.httpd.server_close)
+        self.addCleanup(self.httpd.shutdown)
+        self.server = f"http://127.0.0.1:{self.httpd.server_port}"
+
+    def test_send_posts_the_message_to_the_topic(self):
+        from fleet import phone
+        phone.send(self.server, "ai-fleet-abc", "Fleet", "Ticket #3 needs you", priority="high")
+        self.assertEqual(self.got, [("/", {"topic": "ai-fleet-abc", "title": "Fleet", "message": "Ticket #3 needs you",
+                                           "priority": 4})])
+
+    def test_long_bodies_are_cut_with_an_ellipsis(self):
+        from fleet import phone
+        phone.send(self.server, "t", "Fleet", "x" * 500)
+        phone.send(self.server, "t", "Fleet", "y" * 200)
+        cut, kept = (m["message"] for _, m in self.got)
+        self.assertEqual(cut, "x" * 199 + "…")
+        self.assertEqual(kept, "y" * 200)
+
+    def test_push_is_off_without_a_topic(self):
+        from fleet import phone
+        self.assertIsNone(phone.push({**config.DEFAULTS, "ntfy_server": self.server}, "Fleet", "hi"))
+        self.assertEqual(self.got, [])
+
+    def test_push_returns_at_once_and_logs_a_failure_without_raising(self):
+        import contextlib
+        import io
+        import socket
+        from fleet import phone
+        hang = socket.socket()   # accepts the connection but never answers
+        hang.bind(("127.0.0.1", 0))
+        hang.listen()
+        self.addCleanup(hang.close)
+        cfg = {**config.DEFAULTS, "ntfy_topic": "t", "ntfy_server": f"http://127.0.0.1:{hang.getsockname()[1]}"}
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), mock.patch.object(phone, "TIMEOUT", 0.3):
+            started = time.time()
+            th = phone.push(cfg, "Fleet", "hi")
+            self.assertLess(time.time() - started, 0.1)
+            th.join(5)
+        self.assertIn("[phone] push failed", out.getvalue())
+
+    def test_push_delivers_in_the_background(self):
+        from fleet import phone
+        phone.push({**config.DEFAULTS, "ntfy_topic": "t", "ntfy_server": self.server}, "Fleet", "hi").join(5)
+        self.assertEqual(self.got[0][1]["message"], "hi")
+
+
+class PhoneSetup(unittest.TestCase):
+    """`fleet phone` makes a topic once, through the daemon, so later limit changes don't drop it."""
+
+    def setUp(self):
+        self.addCleanup(setattr, paths, "LIMITS", paths.LIMITS)
+        paths.LIMITS = Path(tempfile.mkdtemp()) / "limits.toml"
+        self.fleet = Fleet.__new__(Fleet)
+        self.fleet.cfg = config.load()
+
+    def call(self, **req):
+        import asyncio
+        return asyncio.run(self.fleet.dispatch(req, 0))
+
+    def test_makes_a_long_random_topic_once_and_saves_it(self):
+        first = self.call(op="phone")
+        self.assertRegex(first["topic"], r"^ai-fleet-[A-Za-z0-9_-]{20,}$")
+        self.assertEqual(first["server"], "https://ntfy.sh")
+        self.assertTrue(first["created"])
+        again = self.call(op="phone")
+        self.assertEqual((again["topic"], again["created"]), (first["topic"], False))
+        self.assertEqual(config.load()["ntfy_topic"], first["topic"])
+
+    def test_changing_limits_keeps_the_topic(self):
+        topic = self.call(op="phone")["topic"]
+        self.call(op="limits", orchestrators=3)
+        self.assertEqual(config.load()["ntfy_topic"], topic)
+        self.assertEqual(config.load()["orchestrators"], 3)
 
 
 if __name__ == "__main__":
