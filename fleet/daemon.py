@@ -17,7 +17,7 @@ import subprocess
 import time
 import uuid
 
-from . import account, claude, config, git, memory, paths, skills, testcounts
+from . import account, claude, config, git, memory, paths, phone, skills, testcounts
 from .runs import (ATTN, CONFLICT, KILLED, LIVE_RUN, MERGED, MERGING, READY, REVIEW, RUNNING, TESTING, WAIT,
                    Run, slug)
 
@@ -234,6 +234,13 @@ class Fleet:
                 self.cfg["summaries"] = req["summaries"]
             config.save(self.cfg)
             return {}
+        if op == "phone":
+            # Saved here, not by the CLI, so the next limits change (which saves self.cfg) keeps the topic.
+            created = not self.cfg.get("ntfy_topic")
+            if created:
+                self.cfg["ntfy_topic"] = phone.new_topic()
+                config.save(self.cfg)
+            return {"topic": self.cfg["ntfy_topic"], "server": self.cfg["ntfy_server"], "created": created}
         if op == "sudo":
             return await self.sudo_request(req, pid)
         if op == "sudo-answer":

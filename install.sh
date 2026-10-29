@@ -43,4 +43,10 @@ systemctl --user daemon-reload
 systemctl --user enable --now ai-fleet.service
 systemctl --user restart ai-fleet.service
 sleep 1
-if fleet status >/dev/null 2>&1; then echo "Daemon is running. Try: fleet status"; else echo "Daemon didn't answer; see: journalctl --user -u ai-fleet -n 50" >&2; fi
+if fleet status >/dev/null 2>&1; then
+  echo "Daemon is running. Try: fleet status"
+  echo
+  fleet phone || true
+else
+  echo "Daemon didn't answer; see: journalctl --user -u ai-fleet -n 50" >&2
+fi

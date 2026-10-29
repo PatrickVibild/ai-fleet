@@ -149,6 +149,28 @@ def cmd_limits(a):
     print(f"{lim['orchestrators']} orchestrators × {lim['implementors_per_orchestrator']} implementors each")
 
 
+def cmd_phone(a):
+    """Make the ntfy topic if there isn't one, say how to subscribe, and with --test send a push to it."""
+    from . import phone
+    r = call({"op": "phone"})
+    topic, server = r["topic"], r["server"]
+    if a.test:
+        try:
+            phone.send(server, topic, "ai-fleet", "Test push: your phone will hear from the fleet here.", priority="high")
+        except Exception as e:
+            sys.exit(f"fleet: test push to {server} failed: {e}")
+        print(f"Sent a test push to {topic}.")
+        return
+    print(f"{'Made a new' if r['created'] else 'Your'} phone topic: {topic}")
+    print(f"""
+To get pushes on your iPhone:
+  1. Install "ntfy" from the App Store.
+  2. Tap +, enter the topic above{"" if server == "https://ntfy.sh" else f", turn on 'Use another server' and enter {server}"}, then Subscribe.
+  3. Run: fleet phone --test
+
+Keep the topic to yourself: anyone who knows it can read the pushes.""")
+
+
 def cmd_cc(a):
     """Start your own Claude session in the background (survives closing the terminal), then attach to it."""
     from . import claude as c
@@ -231,6 +253,8 @@ def main():
     s.add_argument("--orchestrators", type=int)
     s.add_argument("--per", type=int, help="implementors per orchestrator")
     s.add_argument("--summaries", choices=["tool", "ai"])
+    s = sub.add_parser("phone", help="set up phone pushes (ntfy) and show the topic to subscribe to")
+    s.add_argument("--test", action="store_true", help="send a high-priority test push")
     s = sub.add_parser("cc", help="start a background Claude session here and attach to it")
     s.add_argument("prompt", nargs="*")
     s.add_argument("-n", "--name")
@@ -267,6 +291,8 @@ def main():
         cmd_push(a)
     elif a.cmd == "limits":
         cmd_limits(a)
+    elif a.cmd == "phone":
+        cmd_phone(a)
     elif a.cmd == "cc":
         cmd_cc(a)
     elif a.cmd == "sudo-answer":

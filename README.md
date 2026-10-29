@@ -29,6 +29,14 @@ your sessions has sat idle for `inactive_after_min` (30), its row gets an orange
 **· no terminal** when no `claude attach` is showing it. Nothing is stopped for you: right-click → Kill (or
 `x`) when you're done with it.
 
+## Phone pushes
+
+`fleet phone` makes a long random [ntfy](https://ntfy.sh) topic (`ai-fleet-…`) the first time, saves it as
+`ntfy_topic` in `limits.toml`, and tells you how to subscribe in the ntfy iOS app. `fleet phone --test` sends a
+test push. `install.sh` runs `fleet phone` at the end. The topic is the only secret: anyone who knows it can read
+the pushes. Clear `ntfy_topic` to turn pushes off. `ntfy_server` (default `https://ntfy.sh`) points at your own
+server. A push that fails is logged to the journal and dropped.
+
 ## Merged and pushed
 
 A finished run, and each of your own sessions that's in a git repo and not working right now, shows two ticks:

@@ -17,6 +17,9 @@ DEFAULTS = {
     "verdict_timeout_sec": 600,
     "stall_sec": 300,  # a fleet session with no reply from the model this long after starting needs you
     "inactive_after_min": 30,  # one of your sessions idle this long gets an "inactive for …" label
+    "ntfy_topic": "",  # phone pushes go to this ntfy topic; empty = off. `fleet phone` makes one
+    "ntfy_server": "https://ntfy.sh",
+    "phone_delay_min": 2,
     "roles": {
         # skill name (namespace stripped) -> name shown in the panel
         "tdd": "tester",
