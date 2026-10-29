@@ -37,6 +37,12 @@ test push. `install.sh` runs `fleet phone` at the end. The topic is the only sec
 the pushes. Clear `ntfy_topic` to turn pushes off. `ntfy_server` (default `https://ntfy.sh`) points at your own
 server. A push that fails is logged to the journal and dropped.
 
+Anything in the panel's "needs you" list (a question, a permission or sudo prompt, a failed merge, a held repo,
+a stalled or failing fixer, a failed final check) that's still open `phone_delay_min` (2) minutes after it
+showed up sends one high-priority push: who it is as the title, the message as the body. Handle it at the desk
+within that window and the phone stays quiet. If the item clears and comes back, it counts as new. Run done,
+all merged and usage-limit popups stay on the desktop.
+
 ## Merged and pushed
 
 A finished run, and each of your own sessions that's in a git repo and not working right now, shows two ticks:

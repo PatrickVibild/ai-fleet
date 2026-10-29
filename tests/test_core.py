@@ -812,6 +812,7 @@ class Popups(unittest.TestCase):
         paths.STATE_JSON.parent.mkdir(parents=True, exist_ok=True)
         fleet = Fleet.__new__(Fleet)
         fleet.notified, fleet.popups, fleet.last_state = set(), {}, ""
+        fleet.cfg, fleet.first_seen, fleet.phoned = {**config.DEFAULTS}, {}, set()
         usage = {"limited": False, "stopped": 0, "until": None, "five_hour": {}}
         item = {"id": "r:46:merge_failed", "type": "merge_failed", "who": "#46", "msg": "The merger couldn't finish the merge."}
         snaps = [[item], [item], [], [item]]
@@ -827,6 +828,116 @@ class Popups(unittest.TestCase):
                 asyncio.run(fleet.write_state())
         self.assertEqual(closed, [7])
         self.assertEqual(fleet.popups, {"r:46:merge_failed": 8})
+
+
+class PhonePushes(unittest.TestCase):
+    """A "needs you" item still open `phone_delay_min` after it first shows up pushes to the phone, once."""
+
+    def setUp(self):
+        import asyncio
+        from fleet import daemon, phone
+        paths.STATE_JSON.parent.mkdir(parents=True, exist_ok=True)
+        self.asyncio = asyncio
+        self.fleet = Fleet.__new__(Fleet)
+        self.fleet.cfg = {**config.DEFAULTS, "ntfy_topic": "t"}
+        self.fleet.notified, self.fleet.popups, self.fleet.last_state = set(), {}, ""
+        self.fleet.first_seen, self.fleet.phoned = {}, set()
+        self.pushed, self.now = [], 1000.0
+        self.items = []
+        usage = {"limited": False, "stopped": 0, "until": None, "five_hour": {}}
+        self.fleet.snapshot = lambda: {"attention": list(self.items), "usage": usage}
+
+        async def notify_id(title, body):
+            return None
+        for p in (mock.patch.object(daemon, "notify_id", notify_id),
+                  mock.patch.object(daemon, "close_notification", lambda nid: None),
+                  mock.patch.object(phone, "push", lambda cfg, title, body, priority="default":
+                                    self.pushed.append((title, body, priority))),
+                  mock.patch.object(daemon.time, "time", lambda: self.now)):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def tick(self, at):
+        self.now = 1000.0 + at
+        self.asyncio.run(self.fleet.write_state())
+
+    question = {"id": "q1", "type": "question", "run": "r", "ticket": "7", "who": "implementor · #7 Refunds",
+                "where": "ledger", "msg": "Should refunds be partial?"}
+
+    def test_an_item_still_open_after_the_delay_pushes_once(self):
+        self.items = [self.question]
+        for at in (0, 60, 119):
+            self.tick(at)
+        self.assertEqual(self.pushed, [])
+        for at in (120, 121, 600):
+            self.tick(at)
+        self.assertEqual(self.pushed, [("implementor · #7 Refunds · ledger", "Should refunds be partial?", "high")])
+
+
+    def test_an_item_handled_within_the_delay_never_pushes(self):
+        self.items = [self.question]
+        self.tick(0)
+        self.tick(90)
+        self.items = []
+        for at in (120, 600):
+            self.tick(at)
+        self.assertEqual(self.pushed, [])
+
+    def test_an_item_that_clears_and_comes_back_pushes_again_after_a_fresh_delay(self):
+        self.items = [self.question]
+        self.tick(0)
+        self.tick(120)
+        self.items = []
+        self.tick(130)
+        self.items = [self.question]
+        self.tick(200)
+        self.tick(310)
+        self.assertEqual(len(self.pushed), 1)
+        self.tick(320)
+        self.assertEqual(len(self.pushed), 2)
+
+    def test_a_run_item_is_titled_with_the_run(self):
+        self.items = [{"id": "r:problem:merge_failed", "type": "merge_failed", "run": "r", "who": "run · ledger",
+                       "where": "/tmp/ledger", "msg": "The merger couldn't finish the merge."}]
+        self.tick(0)
+        self.tick(120)
+        self.assertEqual(self.pushed, [("run · ledger", "The merger couldn't finish the merge.", "high")])
+
+    def test_nothing_is_sent_without_a_topic(self):
+        from fleet import phone
+        mock.patch.stopall()   # the real push, with send recorded
+        sent = []
+        with mock.patch.object(phone, "send", lambda *a, **kw: sent.append(a)), \
+             mock.patch("fleet.daemon.time.time", lambda: self.now):
+            self.fleet.cfg["ntfy_topic"] = ""
+            self.items = [self.question]
+            self.tick(0)
+            self.tick(120)
+        self.assertEqual(sent, [])
+
+    def test_a_slow_push_holds_up_neither_state_json_nor_popups(self):
+        import threading
+        from fleet import daemon, phone
+        mock.patch.stopall()
+        release, popups = threading.Event(), []
+
+        async def notify_id(title, body):
+            popups.append(title)
+        self.addCleanup(release.set)
+        with mock.patch.object(phone, "send", lambda *a, **kw: release.wait(10)), \
+             mock.patch.object(daemon, "notify_id", notify_id), \
+             mock.patch.object(daemon, "close_notification", lambda nid: None), \
+             mock.patch("fleet.daemon.time.time", lambda: self.now):
+            self.items = [self.question]
+            self.tick(0)
+            self.tick(120)   # the push to the phone starts here and hangs
+            other = {**self.question, "id": "q2", "who": "implementor · #8 Taxes"}
+            self.items = [self.question, other]
+            started = time.monotonic()
+            self.tick(121)
+            self.assertLess(time.monotonic() - started, 1)
+        self.assertEqual(popups, ["implementor · #7 Refunds", "implementor · #8 Taxes"])
+        self.assertEqual([a["id"] for a in json.loads(paths.STATE_JSON.read_text())["attention"]], ["q1", "q2"])
 
 
 class Phone(unittest.TestCase):

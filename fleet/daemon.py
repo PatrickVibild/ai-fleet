@@ -145,6 +145,8 @@ class Fleet:
         self.summaries = {}      # node id -> sentence
         self.notified = set()
         self.popups = {}         # attention id -> desktop notification id, closed once the item clears
+        self.first_seen = {}     # attention id -> when it showed up; pushed to the phone once it's been open a while
+        self.phoned = set()      # attention ids already pushed to the phone
         self.locks = {}
         self.sudo = {}           # request id -> {..., future}
         self.last_state = ""
@@ -1581,6 +1583,22 @@ class Fleet:
             if c.get("sessionId"):
                 self._collect_permission(c, out)
 
+    def push_to_phone(self, attention, live):
+        """Each item still open `phone_delay_min` after it first showed up pushes once. One that clears and comes
+        back starts a fresh delay. The push runs in its own thread, so a slow server never holds up state.json."""
+        now = time.time()
+        for aid in [k for k in self.first_seen if k not in live]:
+            del self.first_seen[aid]
+            self.phoned.discard(aid)
+        for a in attention:
+            since = self.first_seen.setdefault(a["id"], now)
+            if a["id"] in self.phoned or now - since < self.cfg["phone_delay_min"] * 60:
+                continue
+            self.phoned.add(a["id"])
+            # who it is, plus the run when `who` doesn't already name it (a ticket's item names the run in `where`)
+            title = f"{a['who']} · {a['where']}" if a.get("ticket") and a.get("where") else a["who"]
+            phone.push(self.cfg, title, a.get("msg") or a["type"], priority="high")
+
     async def write_state(self):
         snap = self.snapshot()
         for a in snap["attention"]:
@@ -1595,6 +1613,7 @@ class Fleet:
             self.notified.discard(aid)
             if nid:
                 close_notification(nid)
+        self.push_to_phone(snap["attention"], live)
         u = snap["usage"]
         if u["limited"] and ("limit", u["until"]) not in self.notified:
             self.notified.add(("limit", u["until"]))
