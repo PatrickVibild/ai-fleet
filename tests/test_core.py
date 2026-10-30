@@ -7,6 +7,11 @@ from pathlib import Path
 from unittest import mock
 
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
+# A fleet implementor runs these with AI_FLEET_* pointing at the real daemon, and those win over XDG_*
+_scratch = tempfile.mkdtemp()
+os.environ["AI_FLEET_STATE"] = f"{_scratch}/state"
+os.environ["AI_FLEET_CONFIG"] = f"{_scratch}/config"
+os.environ["AI_FLEET_SOCK"] = f"{_scratch}/sock"
 
 from fleet import config, memory, paths, skills, testcounts  # noqa: E402
 from fleet.daemon import Fleet  # noqa: E402
