@@ -1098,6 +1098,12 @@ class TrainingMetrics(unittest.TestCase):
         self.assertEqual(run["curves"]["trainLoss"][-1][0], 4)
         self.assertEqual(run["curves"]["trainLoss"][2][0], 2)
 
+    def test_a_first_validation_logged_at_step_0_sits_at_epoch_1(self):
+        run = {"status": training.RUNNING}
+        training.classify(run, self.TAGS, {"Test/bbox_0": scalars([.19], step0=0)}, 1000, 30)
+        self.assertEqual(run["epoch"], 1)
+        self.assertEqual(run["curves"]["map"], [[1, .19]])
+
     def test_classes_only_with_a_mapping_worst_first(self):
         series = {"Test/bbox_0": scalars([.5]), "coco/fish_precision": scalars([.9]), "coco/crab_precision": scalars([.2])}
         run = {"status": training.RUNNING}

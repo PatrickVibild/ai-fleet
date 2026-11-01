@@ -34,6 +34,7 @@ Item {
 
   function px(x) { return padL + x / bounds.x * (plot.width - padL - padR) }
   function py(y) { return padT + (1 - (y - bounds.lo) / (bounds.hi - bounds.lo)) * (plot.height - padT - padB) }
+  function latest(s) { return U.fmtMetric(s.points[s.points.length - 1][1]) }
   // the point of each series closest to the pointer
   function hoverRows() {
     if (hoverX < 0) return []
@@ -60,7 +61,7 @@ Item {
       spacing: Style.space(10)
       Text {
         Layout.fillWidth: true
-        text: c.title
+        text: c.title + (c.live.length === 1 ? "  " + c.latest(c.live[0]) : "")
         color: c.view.fg
         elide: Text.ElideRight
         font.family: c.view.fontFamily
@@ -72,7 +73,7 @@ Item {
           required property var modelData
           spacing: Style.space(4)
           Rectangle { width: Style.space(10); height: 2; anchors.verticalCenter: parent.verticalCenter; color: modelData.color }
-          Text { text: modelData.name; color: c.view.dim; font.family: c.view.fontFamily; font.pixelSize: Style.font.caption }
+          Text { text: modelData.name + " " + c.latest(modelData); color: c.view.dim; font.family: c.view.fontFamily; font.pixelSize: Style.font.caption }
         }
       }
     }
@@ -121,7 +122,7 @@ Item {
           var end = s.points[s.points.length - 1]
           if (s.points.length === 1 || c.compact) {   // a single point draws no line
             g.fillStyle = String(s.color)
-            g.beginPath(); g.arc(c.px(end[0]), c.py(end[1]), c.compact ? 1.5 : 3, 0, 2 * Math.PI); g.fill()
+            g.beginPath(); g.arc(c.px(end[0]), c.py(end[1]), c.compact ? 1.5 : 4, 0, 2 * Math.PI); g.fill()
           }
         })
         if (c.hoverX >= 0) {

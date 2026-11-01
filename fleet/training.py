@@ -109,8 +109,9 @@ def on_epoch_axis(points, epoch):
     if not points:
         return []
     last = points[-1][1]
-    scale = epoch / last if last > 0 else 1
-    return [[round(p[1] * scale, 3), p[2]] for p in thin(points)]
+    if last <= 0:   # only step 0 so far: it was logged when the epoch ended, so it belongs at that epoch
+        return [[epoch, p[2]] for p in thin(points)]
+    return [[round(p[1] * epoch / last, 3), p[2]] for p in thin(points)]
 
 
 def classify(run, tags, series, now, epochs):
