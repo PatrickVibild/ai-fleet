@@ -150,6 +150,7 @@ class Fleet:
         self.first_seen = {}     # attention id -> when it showed up; pushed to the phone once it's been open a while
         self.phoned = set()      # attention ids already pushed to the phone
         self.locks = {}
+        self.scheduling = asyncio.Lock()   # the 2 s loop and submit() both schedule; one at a time
         self.sudo = {}           # request id -> {..., future}
         self.last_state = ""
         self.last_view = 0.0     # when the panel last said someone is looking
@@ -395,6 +396,12 @@ class Fleet:
         return {"run": run.id, "status": run.d["status"], "events": str(run.dir / "events.jsonl")}
 
     async def schedule(self):
+        """Start queued runs and ready tickets. Serialized: spawning awaits, and a second pass that read the same
+        ready list meanwhile would start a ticket twice."""
+        async with self.scheduling:
+            await self._schedule()
+
+    async def _schedule(self):
         live = [r for r in self.runs.values() if r.d["status"] in LIVE_RUN]
         queued = sorted((r for r in self.runs.values() if r.d["status"] == "queued"), key=lambda r: r.d["created"])
         while queued and len(live) < self.cfg["orchestrators"]:
