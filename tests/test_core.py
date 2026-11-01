@@ -265,6 +265,7 @@ class Schedule(unittest.TestCase):
         fleet.cfg = {**config.DEFAULTS, "implementors_per_orchestrator": 4, "orchestrators": 1}
         fleet.runs = {}
         fleet.scheduling = asyncio.Lock()
+        fleet.locks = {}
         fleet.usage = lambda: {"limited": False}
         fleet.write_settings = lambda *a, **k: "/dev/null"
         run = Run.from_plan({"repo": "/tmp/x", "base": "main", "tickets": [{"id": "1", "title": "A"},
@@ -274,15 +275,19 @@ class Schedule(unittest.TestCase):
         started = []
 
         async def spawn_bg(**kw):
-            started.append(kw["worktree"])
+            started.append(kw["cwd"])
             await asyncio.sleep(0.01)   # the real spawn takes a moment, which lets the other schedule() in
             return kw["session_id"][:8]
         self.addCleanup(setattr, claude, "spawn_bg", claude.spawn_bg)
         claude.spawn_bg = spawn_bg
 
+        async def add_worktree(repo, name, base):
+            return name
+
         async def both():
             await asyncio.gather(fleet.schedule(), fleet.schedule())
-        asyncio.run(both())
+        with mock.patch("fleet.daemon.git.add_worktree", add_worktree):
+            asyncio.run(both())
         self.assertEqual(sorted(started), [f"fleet-{run.d['name']}-1", f"fleet-{run.d['name']}-2"])
 
 
@@ -822,6 +827,7 @@ class RepoHold(GitRepo):
         fleet = Fleet.__new__(Fleet)
         fleet.cfg = {**config.DEFAULTS}
         fleet.runs = {}
+        fleet.scheduling = self.asyncio.Lock()
         fleet.usage = lambda: {"limited": False}
         run = Run.from_plan({"repo": str(self.repo), "base": "main", "tickets": [{"id": "1", "title": "A"}]})
         run.d["status"] = "active"
