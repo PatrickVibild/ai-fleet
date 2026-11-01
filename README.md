@@ -55,7 +55,8 @@ register what it launches:
 The daemon starts one TensorBoard per watch on that machine, bound to localhost, reaches it through an `ssh -L`
 tunnel, and reads it every 15s while the panel is open (60s otherwise). The daemon knows no framework: the agent
 says which tags mean what, and every TensorBoard run under `--dir` becomes a row, so a queue's later runs appear
-by themselves. Training you start yourself isn't tracked.
+by themselves. A row is named after its path under `--dir`, so agents are told to give each run a meaningful name
+before launching it. Training you start yourself isn't tracked.
 
 A row shows the machine, status, epoch, ETA, mAP and a small loss curve. Click it for the curves, every other tag,
 and per-class mAP if the run was registered with `--class-map` (the agent may run a small converter if the training
