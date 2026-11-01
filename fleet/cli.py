@@ -203,6 +203,22 @@ def cmd_sudo_answer(a):
     call({"op": "sudo-answer", "id": a.id, "password": password})
 
 
+def cmd_train(a):
+    if a.train_cmd == "viewing":
+        call({"op": "train-viewing"}, timeout=5)
+    elif a.train_cmd in ("stop", "remove"):
+        call({"op": f"train-{a.train_cmd}", "id": a.id}, timeout=120)
+    elif a.train_cmd == "list":
+        for r in json.loads(paths.TRAINING_JSON.read_text())["runs"] if paths.TRAINING_JSON.exists() else []:
+            print(f"{r['id']}  {r['status']:<8} {r['machine']}  epoch {r.get('epoch', 0)}/{r.get('epochs') or '?'}  {r['name']}"
+                  + ("  [host unreachable]" if r.get("unreachable") else "") + (f"  {r['error']}" if r.get("error") else ""))
+    else:
+        r = call({"op": "train-watch", "dir": a.dir, "host": a.host, "tensorboard": a.tensorboard, "epochs": a.epochs,
+                  "stop": a.stop, "trainLoss": a.train_loss, "valLoss": a.val_loss, "map": a.map, "map50": a.map50,
+                  "classMap": a.class_map}, timeout=120)
+        print(f"Watching {a.dir} on {r['machine']} ({r['watch']}). Its runs show in the panel's AI-train tab.")
+
+
 def main():
     p = argparse.ArgumentParser(prog="fleet", description="Run and watch Claude agents (ai-fleet).")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -260,6 +276,23 @@ def main():
     s.add_argument("-n", "--name")
     s.add_argument("-w", "--worktree")
     s.add_argument("--permission-mode", default="auto")
+    s = sub.add_parser("train", help="AI training shown in the panel's AI-train tab")
+    train = s.add_subparsers(dest="train_cmd", required=True)
+    s = train.add_parser("watch", help="track the TensorBoard runs under a log directory")
+    s.add_argument("--host", help="ssh alias of the training machine; leave out for this machine")
+    s.add_argument("--dir", required=True, help="log directory on that machine; every run under it is tracked")
+    s.add_argument("--tensorboard", required=True, help="the tensorboard executable on that machine")
+    s.add_argument("--epochs", required=True, type=int, help="epochs each run trains for")
+    s.add_argument("--stop", required=True, help="shell command that stops one run; {run} is replaced by its TensorBoard run name")
+    s.add_argument("--train-loss", required=True, help="train loss tag; a glob sums its matches")
+    s.add_argument("--map", required=True, help="val mAP50-95 tag, logged once per epoch: it also gives the epoch and ETA")
+    s.add_argument("--val-loss", help="val loss tag; a glob sums its matches")
+    s.add_argument("--map50", help="val mAP50 tag")
+    s.add_argument("--class-map", help="regex matching per-class mAP tags, with one group capturing the class name")
+    train.add_parser("list", help="list tracked runs")
+    for name in ("stop", "remove"):
+        train.add_parser(name, help=f"{name} a run by id").add_argument("id")
+    train.add_parser("viewing", help="tell the daemon the panel is open (metrics refresh faster then)")
     s = sub.add_parser("sudo-answer", help="answer a sudo request (password on stdin)")
     s.add_argument("id")
     s.add_argument("--deny", action="store_true")
@@ -295,6 +328,8 @@ def main():
         cmd_phone(a)
     elif a.cmd == "cc":
         cmd_cc(a)
+    elif a.cmd == "train":
+        cmd_train(a)
     elif a.cmd == "sudo-answer":
         cmd_sudo_answer(a)
     elif a.cmd == "viewing":

@@ -17,7 +17,7 @@ import subprocess
 import time
 import uuid
 
-from . import account, claude, config, git, memory, paths, phone, skills, testcounts
+from . import account, claude, config, git, memory, paths, phone, skills, testcounts, training
 from .runs import (ATTN, CONFLICT, KILLED, LIVE_RUN, MERGED, MERGING, READY, REVIEW, RUNNING, TESTING, WAIT,
                    Run, slug)
 
@@ -133,6 +133,8 @@ class Question:
 
 
 class Fleet:
+    training = None   # set in __init__; tests build a bare Fleet without it
+
     def __init__(self):
         paths.ensure()
         self.cfg = config.load()
@@ -158,6 +160,7 @@ class Fleet:
         self.gitinfo = {}        # checkout path -> git.status() of a finished run's repo or a session's cwd
         self.pushes = {}         # checkout path -> the last push from the panel: {state, kind, msg, at}
         self.checks = {}         # run id -> check commands the daemon runs itself, shown under the orchestrator
+        self.training = training.Training()
         try:
             self.windows = json.loads(paths.MODEL_WINDOWS.read_text())
         except (OSError, json.JSONDecodeError):
@@ -176,7 +179,8 @@ class Fleet:
         server = await asyncio.start_unix_server(self._client, path=str(paths.SOCK))
         os.chmod(paths.SOCK, 0o600)
         loops = [self._every(2, self.poll), self._every(2, self.schedule), self._every(1, self.write_state),
-                 self._every(5, self.summarize), self._every(5, self.refresh_usage), self._every(5, self.refresh_git)]
+                 self._every(5, self.summarize), self._every(5, self.refresh_usage), self._every(5, self.refresh_git),
+                 self._every(2, self.training.poll)]
         async with server:
             await asyncio.gather(server.serve_forever(), *loops)
 
@@ -253,6 +257,15 @@ class Fleet:
                 self._last_sum = 0   # someone just opened the panel: summarize right away
                 self.live_tried = 0  # and fetch the account's usage fresh (a plan change shows up here)
             self.last_view = time.time()
+            return {}
+        if op == "train-watch":
+            return await self.training.watch(req, await self.session_for_pid(pid))
+        if op == "train-stop":
+            return await self.training.stop(req["id"])
+        if op == "train-remove":
+            return await self.training.remove(req["id"])
+        if op == "train-viewing":
+            self.training.viewed_at = time.time()
             return {}
         if op == "events":
             r = self._run(req["run"])
@@ -1444,6 +1457,7 @@ class Fleet:
             self._add_summaries(c)
         node["claudeMd"] = memory.claude_md(a.get("cwd") or (main.workdir if main else None) or (v.cwd if v else None))
         node.update(extra or {})
+        node["training"] = sid in self.training.training_sessions() if self.training else False
         if limited:
             node["note"] = "usage limit"
         return node

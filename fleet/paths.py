@@ -12,6 +12,7 @@ RUNTIME = Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}"))
 SOCK = Path(os.environ.get("AI_FLEET_SOCK") or RUNTIME / "ai-fleet.sock")
 
 STATE_JSON = STATE / "state.json"
+TRAINING_JSON = STATE / "training.json"
 RUNS = STATE / "runs"
 STATUSLINE = STATE / "statusline"
 SUMMARY_CWD = STATE / "summarizer"

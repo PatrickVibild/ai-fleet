@@ -21,6 +21,7 @@ QtObject {
   readonly property var limits: state ? state.limits || {} : {}
   readonly property var usage: state ? state.usage || {} : {}
   readonly property string summaries: state ? state.summaries || "tool" : "tool"
+  property var trainingRuns: []
 
   // Theme palette beyond the shell's five roles; reread whenever the theme's accent changes.
   property var palette: ({})
@@ -44,6 +45,17 @@ QtObject {
       try { root.state = JSON.parse(text()) } catch (e) { }
     }
     onLoadFailed: root.state = null
+  }
+
+  property FileView trainingFile: FileView {
+    path: root.stateDir + "/training.json"
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: {
+      try { root.trainingRuns = JSON.parse(text()).runs || [] } catch (e) { }
+    }
+    onLoadFailed: root.trainingRuns = []
   }
 
   property FileView colorsFile: FileView {

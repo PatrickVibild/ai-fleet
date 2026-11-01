@@ -43,6 +43,30 @@ showed up sends one high-priority push: who it is as the title, the message as t
 within that window and the phone stays quiet. If the item clears and comes back, it counts as new. Run done,
 all merged and usage-limit popups stay on the desktop.
 
+## AI training
+
+The panel has two tabs at the bottom: **Agentic** and **AI-train** (or press `t`). `install.sh` adds a short rule
+(`skill/training-rule.md`) to `~/.claude/CLAUDE.md` telling every new Claude session to log to TensorBoard and
+register what it launches:
+
+    fleet train watch --host pc4090 --dir ~/runs/overnight --tensorboard ~/venv/bin/tensorboard --epochs 72 \
+      --stop 'pkill -f "[o]utput-dir .*/{run}"' --train-loss Loss/total --map Test/coco_eval_bbox_0
+
+The daemon starts one TensorBoard per watch on that machine, bound to localhost, reaches it through an `ssh -L`
+tunnel, and reads it every 15s while the panel is open (60s otherwise). The daemon knows no framework: the agent
+says which tags mean what, and every TensorBoard run under `--dir` becomes a row, so a queue's later runs appear
+by themselves. Training you start yourself isn't tracked.
+
+A row shows the machine, status, epoch, ETA, mAP and a small loss curve. Click it for the curves, every other tag,
+and per-class mAP if the run was registered with `--class-map`. Right-click a running or stalled run for **Stop**,
+which runs its `--stop` command at once; the rest of a queue carries on. Right-click anything not running for
+**Remove**, which clears it from ai-fleet and leaves the logs on the training machine. Removing a watch's last run
+stops its TensorBoard, so a queue still between runs then needs registering again.
+
+A run is **stalled** after no new data for 3 epochs of its recent speed (at least 2 minutes, or an hour before it has
+two epochs to judge by). Crashes look the same. Training never raises "needs you" or sends a push. In the Agentic
+tab, the agent that registered a watch only gets a **training** pill while one of its runs is going.
+
 ## Merged and pushed
 
 A finished run, and each of your own sessions that's in a git repo and not working right now, shows two ticks:

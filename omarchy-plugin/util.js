@@ -214,7 +214,7 @@ function rowFor(n, depth, extra, parentIdle) {
     testCmd: tc.cmd || "", testExpected: tc.expected || 0,
     testEstimated: !!tc.estimated,
     pulse: pulseFor(n, parentIdle), runningKids: runningKids(n),
-    inactiveFor: n.inactiveFor || 0, detached: !!n.detached
+    inactiveFor: n.inactiveFor || 0, detached: !!n.detached, training: !!n.training
   }
   for (var f in g) r[f] = g[f]
   for (var k in extra) r[k] = extra[k]
@@ -258,6 +258,18 @@ function flattenSessions(sessions, overrides, laneFor) {
 }
 
 // Update a ListModel to match `items` (each with a unique `key`) without recreating unchanged rows.
+// 0.0123 / 1.24 / 1240: three significant figures, for chart axes and tooltips
+function fmtMetric(v) {
+  return Math.abs(v) >= 1000 ? String(Math.round(v)) : String(Number(v.toPrecision(3)))
+}
+
+function fmtEta(sec) {
+  if (sec === null || sec === undefined) return "–"
+  if (sec < 60) return "<1m"
+  var m = Math.round(sec / 60)
+  return m < 60 ? m + "m" : Math.floor(m / 60) + "h " + (m % 60) + "m"
+}
+
 function syncModel(model, items) {
   for (var i = 0; i < items.length; i++) {
     var it = items[i]

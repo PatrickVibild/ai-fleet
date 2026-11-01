@@ -8,7 +8,7 @@ from unittest import mock
 
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 
-from fleet import config, memory, paths, skills, testcounts  # noqa: E402
+from fleet import config, memory, paths, skills, testcounts, training  # noqa: E402
 from fleet.daemon import Fleet  # noqa: E402
 from fleet.runs import ATTN, CONFLICT, KILLED, MERGED, RUNNING, WAIT, Run  # noqa: E402
 from fleet.transcripts import SessionView, describe  # noqa: E402
@@ -1033,6 +1033,156 @@ class PhoneSetup(unittest.TestCase):
         self.call(op="limits", orchestrators=3)
         self.assertEqual(config.load()["ntfy_topic"], topic)
         self.assertEqual(config.load()["orchestrators"], 3)
+
+
+
+def scalars(values, start=1000.0, step0=0, per=10.0):
+    return [[start + i * per, step0 + i, v] for i, v in enumerate(values)]
+
+
+class TrainingMetrics(unittest.TestCase):
+    TAGS = {"trainLoss": "train/*", "valLoss": "val/total", "map": "Test/bbox_0", "map50": "", "classMap": ""}
+
+    def test_glob_sums_only_steps_every_series_has(self):
+        series = {"train/box": scalars([1, 2, 3], step0=1), "train/cls": scalars([10, 20], step0=1),
+                  "Test/bbox_0": scalars([0.1, 0.2], step0=1)}
+        run = {"status": training.RUNNING}
+        training.classify(run, self.TAGS, series, now=1015.0, epochs=5)
+        self.assertEqual(run["trainLoss"], 22)
+        self.assertEqual([p[1] for p in run["curves"]["trainLoss"]], [11, 22])
+
+    def test_epoch_counts_from_zero_or_one(self):
+        self.assertEqual(training.epoch_of(scalars([.1, .2, .3], step0=0)), 3)
+        self.assertEqual(training.epoch_of(scalars([.1, .2, .3], step0=1)), 3)
+        self.assertEqual(training.epoch_of([]), 0)
+
+    def test_eta_uses_recent_epochs_and_time_since_the_last(self):
+        run = {"status": training.RUNNING}
+        m = scalars([.1, .2, .3], step0=1, per=100.0)  # epoch 3 of 10 at 100 s/epoch, finished 30 s ago
+        training.classify(run, self.TAGS, {"Test/bbox_0": m}, now=m[-1][0] + 30, epochs=10)
+        self.assertEqual(run["epoch"], 3)
+        self.assertAlmostEqual(run["etaSec"], 670)
+        self.assertEqual(run["status"], training.RUNNING)
+
+    def test_stalls_after_three_epochs_without_data_and_recovers(self):
+        run = {"status": training.RUNNING}
+        m = scalars([.1, .2, .3], step0=1, per=100.0)
+        training.classify(run, self.TAGS, {"Test/bbox_0": m}, now=m[-1][0] + 301, epochs=10)
+        self.assertEqual(run["status"], training.STALLED)
+        training.classify(run, self.TAGS, {"Test/bbox_0": m}, now=m[-1][0] + 299, epochs=10)
+        self.assertEqual(run["status"], training.RUNNING)
+
+    def test_a_run_with_no_speed_yet_waits_an_hour(self):
+        run = {"status": training.RUNNING, "firstSeen": 1}
+        training.classify(run, self.TAGS, {}, now=3000, epochs=10)
+        self.assertEqual(run["status"], training.RUNNING)
+        training.classify(run, self.TAGS, {}, now=3700, epochs=10)
+        self.assertEqual(run["status"], training.STALLED)
+
+    def test_reaching_the_last_epoch_finishes_for_good(self):
+        run = {"status": training.RUNNING}
+        m = scalars([.1, .2], step0=0)
+        training.classify(run, self.TAGS, {"Test/bbox_0": m}, now=1e6, epochs=2)
+        self.assertEqual(run["status"], training.FINISHED)
+        self.assertEqual(run["etaSec"], 0)
+
+    def test_stopped_stays_stopped(self):
+        run = {"status": training.STOPPED}
+        training.classify(run, self.TAGS, {"Test/bbox_0": scalars([.1], step0=0)}, now=1e6, epochs=1)
+        self.assertEqual(run["status"], training.STOPPED)
+
+    def test_per_step_loss_shares_the_epoch_axis(self):
+        run = {"status": training.RUNNING}
+        loss = [[1000.0 + i, i * 100, 5.0 - i] for i in range(5)]  # steps 0..400 across 4 epochs
+        training.classify(run, self.TAGS, {"train/total": loss, "Test/bbox_0": scalars([.1, .2, .3, .4], step0=1)}, 1010, 10)
+        self.assertEqual(run["curves"]["trainLoss"][-1][0], 4)
+        self.assertEqual(run["curves"]["trainLoss"][2][0], 2)
+
+    def test_classes_only_with_a_mapping_worst_first(self):
+        series = {"Test/bbox_0": scalars([.5]), "coco/fish_precision": scalars([.9]), "coco/crab_precision": scalars([.2])}
+        run = {"status": training.RUNNING}
+        training.classify(run, self.TAGS, series, 1000, 5)
+        self.assertEqual(run["classes"], [])
+        training.classify(run, {**self.TAGS, "classMap": r"coco/(.*)_precision"}, series, 1000, 5)
+        self.assertEqual([c["name"] for c in run["classes"]], ["crab", "fish"])
+
+    def test_thin_keeps_the_last_point(self):
+        out = training.thin(list(range(1000)), 300)
+        self.assertEqual(len(out), 300)
+        self.assertEqual(out[-1], 999)
+
+    def test_nan_points_are_dropped(self):
+        self.assertEqual(training.finite([[0, 0, 1.0], [1, 1, float("nan")], [2, 2, float("inf")]]), [[0, 0, 1.0]])
+
+
+class TrainingActions(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        paths.TRAINING_JSON.unlink(missing_ok=True)
+        self.t = training.Training()
+        self.t.watches["w"] = {"id": "w", "host": None, "dir": "/logs/q", "stop": "echo {run} > /dev/null", "session": "s1", "removed": []}
+        self.t.runs["r"] = {"id": "r", "watch": "w", "name": "a", "tbRun": "a", "status": training.RUNNING, "machine": "m"}
+
+    async def test_stop_marks_stopped_and_failure_says_why(self):
+        await self.t.stop("r")
+        self.assertEqual(self.t.runs["r"]["status"], training.STOPPED)
+        self.t.runs["r"]["status"] = training.RUNNING
+        self.t.watches["w"]["stop"] = "echo nope; exit 3"
+        with self.assertRaisesRegex(ValueError, "nope"):
+            await self.t.stop("r")
+        self.assertEqual(self.t.runs["r"]["status"], training.RUNNING)
+
+    async def test_stop_substitutes_the_run_name(self):
+        out = Path(tempfile.mkdtemp()) / "out"
+        self.t.watches["w"]["stop"] = f"echo {{run}} > {out}"
+        await self.t.stop("r")
+        self.assertEqual(out.read_text().strip(), "a")
+
+    async def test_stop_refuses_a_name_unsafe_in_a_shell(self):
+        self.t.runs["r"]["tbRun"] = "a$(reboot)"
+        with self.assertRaisesRegex(ValueError, "safe"):
+            await self.t.stop("r")
+
+    async def test_cant_remove_a_running_run_unless_its_host_is_gone(self):
+        with self.assertRaisesRegex(ValueError, "still running"):
+            await self.t.remove("r")
+        self.t.runs["r"]["unreachable"] = True
+        await self.t.remove("r")
+        self.assertNotIn("r", self.t.runs)
+
+    async def test_removing_the_last_run_ends_the_watch_but_not_before(self):
+        self.t.runs["r"]["status"] = training.FINISHED
+        self.t.runs["r2"] = {"id": "r2", "watch": "w", "name": "b", "tbRun": "b", "status": training.FINISHED, "machine": "m"}
+        await self.t.remove("r")
+        self.assertIn("w", self.t.watches)
+        self.assertEqual(self.t.watches["w"]["removed"], ["a"])
+        await self.t.remove("r2")
+        self.assertNotIn("w", self.t.watches)
+
+    async def test_a_watch_with_no_runs_has_a_removable_row(self):
+        del self.t.runs["r"]
+        self.assertEqual([x["status"] for x in self.t.rows()], [training.WAITING])
+        await self.t.remove("w")
+        self.assertEqual(self.t.rows(), [])
+
+    def test_only_going_runs_mark_their_session(self):
+        self.assertEqual(self.t.training_sessions(), {"s1"})
+        self.t.runs["r"]["status"] = training.FINISHED
+        self.assertEqual(self.t.training_sessions(), set())
+
+    def test_rows_survive_a_restart(self):
+        self.t.save()
+        again = training.Training()
+        self.assertEqual(again.runs["r"]["name"], "a")
+        self.assertEqual(again.watches["w"]["dir"], "/logs/q")
+
+    async def test_watch_rejects_a_class_regex_without_one_group(self):
+        req = {"dir": "/x", "tensorboard": "tb", "stop": "s", "trainLoss": "l", "map": "m", "epochs": 3, "classMap": "c.*"}
+        with self.assertRaisesRegex(ValueError, "capture group"):
+            await self.t.watch(req, None)
+
+    def test_tilde_still_expands(self):
+        self.assertEqual(training.path_expr("~/a b"), "\"$HOME\"'/a b'")
+        self.assertEqual(training.path_expr("/a"), "/a")
 
 
 if __name__ == "__main__":

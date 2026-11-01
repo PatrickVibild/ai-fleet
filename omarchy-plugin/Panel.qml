@@ -27,6 +27,8 @@ Panel {
   property string focusedKey: ""
   property string confirmKill: ""
   property bool typing: false
+  property string tab: "agentic"  // the bottom buttons: "agentic" or "train"
+  function setTab(t) { tab = t; closeMenu(); flick.contentY = 0 }
   property var rowIndex: ({})     // key -> row object, for keyboard actions
   property var order: []          // visible row keys, top to bottom
   property var rowItems: ({})     // key -> AgentRow item, for scrolling the focused row into view
@@ -164,6 +166,12 @@ Panel {
   }
   function menuItems(row) {
     var out = []
+    if (row.isTrain) {
+      var going = row.status === "running" || row.status === "stalled"
+      if (going) out.push({ label: "Stop training", act: "train-stop", danger: true })
+      if (!going || row.status === "stalled" || row.unreachable) out.push({ label: "Remove from ai-fleet", act: "train-remove" })
+      return out
+    }
     if (U.canOpen(row) && row.state !== "killed") out.push({ label: "Open in terminal", hint: "o", act: "open" })
     if (row.kind === "implementor" && (row.state === "killed" || row.state === "attn")) out.push({ label: "Retry", hint: "r", act: "retry" })
     if (killable(row)) out.push({ label: killLabel(row) + "…", hint: "x", act: "confirm", danger: true })
@@ -191,7 +199,9 @@ Panel {
     if (!row) return
     if (act === "confirm") { menuConfirm = true; return }
     closeMenu()
-    if (act === "open") openRow(row)
+    if (act === "train-stop") fleet.run(["train", "stop", row.id], "Stopped " + row.name, undefined, "Stop failed")
+    else if (act === "train-remove") fleet.run(["train", "remove", row.id], "Removed " + row.name)
+    else if (act === "open") openRow(row)
     else if (act === "retry") retry(row)
     else if (act === "kill") kill(row)
   }
@@ -218,6 +228,15 @@ Panel {
     triggeredOnStart: true
     running: root.opened && root.fleet.summaries === "ai"
     onTriggered: Quickshell.execDetached([root.fleet.fleetBin, "viewing"])
+  }
+
+  // Training metrics refresh faster while someone is looking.
+  Timer {
+    interval: 5000
+    repeat: true
+    triggeredOnStart: true
+    running: root.opened
+    onTriggered: Quickshell.execDetached([root.fleet.fleetBin, "train", "viewing"])
   }
 
   implicitWidth: barButton.implicitWidth
@@ -294,7 +313,7 @@ Panel {
     open: root.opened
     focusTarget: keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(1140))
-    contentHeight: panel.fittedContentHeight(column.implicitHeight, Style.space(1400))
+    contentHeight: panel.fittedContentHeight(column.implicitHeight + footer.implicitHeight, Style.space(1400))
 
     PanelKeyCatcher {
       id: keyCatcher
@@ -302,6 +321,7 @@ Panel {
       blocked: root.typing
 
       onMoveRequested: function(dx, dy) {
+        if (root.tab !== "agentic") return
         if (dy !== 0) {
           root.moveFocus(dy)
           var item = root.rowItems[root.focusedKey]
@@ -312,9 +332,11 @@ Panel {
       }
       onActivateRequested: {
         if (root.menuConfirm) return root.menuAct("kill")
+        if (root.tab !== "agentic") return
         var row = root.focused(); if (row && row.hasKids) root.toggleExpand(row.key, row.expanded)
       }
       onDeleteRequested: {
+        if (root.tab !== "agentic") return
         var row = root.focused()
         if (row && root.menuConfirm && root.menuKey === row.key) root.closeMenu()
         else if (row) root.openMenuAtRow(row, true)
@@ -322,6 +344,8 @@ Panel {
       onCloseRequested: root.menuRow ? root.closeMenu() : root.confirmKill !== "" ? root.confirmKill = "" : root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
       onTextKey: function(t) {
+        if (t === "t") return root.setTab(root.tab === "agentic" ? "train" : "agentic")
+        if (root.tab !== "agentic") return
         if (t === "z") return root.setAllExpanded(!root.anyExpanded)
         var row = root.focused()
         if (!row) return
@@ -332,7 +356,10 @@ Panel {
 
       Flickable {
         id: flick
-        anchors.fill: parent
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
+        anchors.bottom: footer.top
         contentWidth: width
         contentHeight: column.implicitHeight
         clip: true
@@ -352,223 +379,262 @@ Panel {
           width: flick.width
           spacing: Style.space(6)
 
-          // ---- header
-          RowLayout {
+          ColumnLayout {
             Layout.fillWidth: true
-            Layout.leftMargin: Style.space(14)
-            Layout.rightMargin: Style.space(14)
-            Layout.topMargin: Style.space(6)
-            spacing: Style.space(14)
-            ColumnLayout {
-              Layout.fillWidth: true
-              Layout.minimumWidth: Style.space(160)
-              spacing: Style.space(4)
-              RowLayout {
-                spacing: Style.space(8)
-                FleetIcon { size: Style.space(16); stroke: 1.5; color: root.fleet.accent; Layout.alignment: Qt.AlignVCenter }
-                Text { text: "F L E E T"; color: root.fg; font.family: root.fontFamily; font.pixelSize: Style.font.subtitle; font.bold: true }
-              }
-              Text {
-                text: {
-                  var agents = 0
-                  function walk(n) { if (U.hasCtx(n) && ["run", "attn", "wait"].indexOf(n.state) >= 0) agents++; (n.children || []).forEach(walk) }
-                  root.fleet.runs.forEach(function(r) { if (r.tree) walk(r.tree) })
-                  root.fleet.sessions.forEach(walk)
-                  return agents + " agents live · " + root.implementorsRunning + "/" + (root.activeRuns.length * (root.fleet.limits.implementors_per_orchestrator || 0))
-                    + " implementors · " + root.ticketsDone + "/" + root.ticketsTotal + " merged"
-                }
-                Layout.fillWidth: true
-                wrapMode: Text.Wrap
-                color: root.dim
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.bodySmall
-              }
-              // account usage, as in Claude Code's /usage: the 5-hour session window, then the week
-              RowLayout {
-                Layout.fillWidth: true
-                Layout.topMargin: Style.space(2)
-                spacing: Style.space(14)
-                UsageBar { Layout.fillWidth: true; Layout.preferredWidth: 1; label: "Session"; window: root.usage.five_hour || {}; view: root }
-                UsageBar { Layout.fillWidth: true; Layout.preferredWidth: 1; label: "Week"; window: root.usage.seven_day || {}; view: root }
-              }
-            }
-            Stepper {
-              Layout.alignment: Qt.AlignTop
-              label: "Orchestrators"; value: root.fleet.limits.orchestrators || 0; view: root
-              onChange: function(v) { root.fleet.run(["limits", "--orchestrators", String(v)], "Max orchestrators: " + v) }
-            }
-            Stepper {
-              Layout.alignment: Qt.AlignTop
-              label: "/implement each"; value: root.fleet.limits.implementors_per_orchestrator || 0; view: root
-              onChange: function(v) { root.fleet.run(["limits", "--per", String(v)], "Max implementors per orchestrator: " + v) }
-            }
-            SmallButton {
-              Layout.alignment: Qt.AlignTop
-              text: root.anyExpanded ? "▸ Collapse all" : "▾ Expand all"; font: root.fontFamily
-              tone: root.dim; ink: root.surface
-              onClicked: root.setAllExpanded(!root.anyExpanded)
-            }
-            Row {
-              Layout.alignment: Qt.AlignTop
-              spacing: 0
-              SmallButton {
-                text: "Tool calls"; font: root.fontFamily
-                tone: root.fleet.summaries === "tool" ? root.fg : root.dim
-                primary: root.fleet.summaries === "tool"; ink: root.surface
-                onClicked: root.fleet.run(["limits", "--summaries", "tool"], "Status lines from tool calls")
-              }
-              SmallButton {
-                text: "✦ AI summary"; font: root.fontFamily
-                tone: root.fleet.summaries === "ai" ? root.fleet.magenta : root.dim
-                primary: root.fleet.summaries === "ai"; ink: root.surface
-                onClicked: root.fleet.run(["limits", "--summaries", "ai"], "AI summaries on: Haiku rewrites status lines every 20s")
-              }
-            }
-          }
+            visible: root.tab === "agentic"
+            spacing: Style.space(6)
 
-          Banner {
-            Layout.fillWidth: true
-            visible: root.fleet.stale
-            text: "The ai-fleet daemon isn't answering. Start it with: systemctl --user start ai-fleet"
-            tone: root.fleet.red; font: root.fontFamily
-          }
-
-          // ---- usage limit: agents stopped by it, and the button that resumes them
-          Rectangle {
-            id: limitBox
-            Layout.fillWidth: true
-            Layout.leftMargin: Style.space(14)
-            Layout.rightMargin: Style.space(14)
-            visible: root.limited || root.limitStopped > 0
-            readonly property color tone: root.limited ? root.fleet.orange : root.fleet.green
-            implicitHeight: limitRow.implicitHeight + Style.space(10)
-            radius: 3
-            color: Qt.rgba(tone.r, tone.g, tone.b, 0.09)
-            border.color: Qt.rgba(tone.r, tone.g, tone.b, 0.3)
-            border.width: 1
+            // ---- header
             RowLayout {
-              id: limitRow
-              anchors.verticalCenter: parent.verticalCenter
-              x: Style.space(10)
-              width: parent.width - 2 * x
-              spacing: Style.space(10)
-              Text {
-                Layout.fillWidth: true
-                wrapMode: Text.Wrap
-                color: limitBox.tone
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.bodySmall
-                text: root.limited
-                  ? "Usage limit reached · resets " + root.clock(root.usage.until) + ". "
-                    + root.limitStopped + " agent" + (root.limitStopped === 1 ? "" : "s") + " stopped; no new tickets start until then."
-                  : "Usage limit has reset. " + root.limitStopped + " agent" + (root.limitStopped === 1 ? " is" : "s are") + " waiting to continue."
-              }
-              SmallButton {
-                visible: root.limitStopped > 0
-                text: "▶ Continue " + root.limitStopped + (root.limitStopped === 1 ? " agent" : " agents")
-                font: root.fontFamily
-                tone: root.limited ? root.dim : root.fleet.green
-                primary: !root.limited
-                ink: root.surface
-                onClicked: root.fleet.run(["continue"], "Resumed agents stopped by the usage limit")
-              }
-            }
-          }
-
-          // ---- needs you
-          RowLayout {
-            Layout.fillWidth: true
-            Layout.leftMargin: Style.space(14)
-            Layout.rightMargin: Style.space(14)
-            Layout.topMargin: Style.space(4)
-            visible: attentionModel.count > 0
-            spacing: Style.space(8)
-            Text { text: "NEEDS YOU · " + attentionModel.count; color: root.fleet.red; font.family: root.fontFamily; font.pixelSize: Style.font.caption; font.letterSpacing: 2 }
-            Rectangle { Layout.fillWidth: true; height: 1; color: Qt.rgba(root.fleet.red.r, root.fleet.red.g, root.fleet.red.b, 0.35) }
-          }
-          Repeater {
-            model: attentionModel
-            AttentionCard {
-              required property var model
               Layout.fillWidth: true
               Layout.leftMargin: Style.space(14)
               Layout.rightMargin: Style.space(14)
-              item: model
+              Layout.topMargin: Style.space(6)
+              spacing: Style.space(14)
+              ColumnLayout {
+                Layout.fillWidth: true
+                Layout.minimumWidth: Style.space(160)
+                spacing: Style.space(4)
+                RowLayout {
+                  spacing: Style.space(8)
+                  FleetIcon { size: Style.space(16); stroke: 1.5; color: root.fleet.accent; Layout.alignment: Qt.AlignVCenter }
+                  Text { text: "F L E E T"; color: root.fg; font.family: root.fontFamily; font.pixelSize: Style.font.subtitle; font.bold: true }
+                }
+                Text {
+                  text: {
+                    var agents = 0
+                    function walk(n) { if (U.hasCtx(n) && ["run", "attn", "wait"].indexOf(n.state) >= 0) agents++; (n.children || []).forEach(walk) }
+                    root.fleet.runs.forEach(function(r) { if (r.tree) walk(r.tree) })
+                    root.fleet.sessions.forEach(walk)
+                    return agents + " agents live · " + root.implementorsRunning + "/" + (root.activeRuns.length * (root.fleet.limits.implementors_per_orchestrator || 0))
+                      + " implementors · " + root.ticketsDone + "/" + root.ticketsTotal + " merged"
+                  }
+                  Layout.fillWidth: true
+                  wrapMode: Text.Wrap
+                  color: root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.bodySmall
+                }
+                // account usage, as in Claude Code's /usage: the 5-hour session window, then the week
+                RowLayout {
+                  Layout.fillWidth: true
+                  Layout.topMargin: Style.space(2)
+                  spacing: Style.space(14)
+                  UsageBar { Layout.fillWidth: true; Layout.preferredWidth: 1; label: "Session"; window: root.usage.five_hour || {}; view: root }
+                  UsageBar { Layout.fillWidth: true; Layout.preferredWidth: 1; label: "Week"; window: root.usage.seven_day || {}; view: root }
+                }
+              }
+              Stepper {
+                Layout.alignment: Qt.AlignTop
+                label: "Orchestrators"; value: root.fleet.limits.orchestrators || 0; view: root
+                onChange: function(v) { root.fleet.run(["limits", "--orchestrators", String(v)], "Max orchestrators: " + v) }
+              }
+              Stepper {
+                Layout.alignment: Qt.AlignTop
+                label: "/implement each"; value: root.fleet.limits.implementors_per_orchestrator || 0; view: root
+                onChange: function(v) { root.fleet.run(["limits", "--per", String(v)], "Max implementors per orchestrator: " + v) }
+              }
+              SmallButton {
+                Layout.alignment: Qt.AlignTop
+                text: root.anyExpanded ? "▸ Collapse all" : "▾ Expand all"; font: root.fontFamily
+                tone: root.dim; ink: root.surface
+                onClicked: root.setAllExpanded(!root.anyExpanded)
+              }
+              Row {
+                Layout.alignment: Qt.AlignTop
+                spacing: 0
+                SmallButton {
+                  text: "Tool calls"; font: root.fontFamily
+                  tone: root.fleet.summaries === "tool" ? root.fg : root.dim
+                  primary: root.fleet.summaries === "tool"; ink: root.surface
+                  onClicked: root.fleet.run(["limits", "--summaries", "tool"], "Status lines from tool calls")
+                }
+                SmallButton {
+                  text: "✦ AI summary"; font: root.fontFamily
+                  tone: root.fleet.summaries === "ai" ? root.fleet.magenta : root.dim
+                  primary: root.fleet.summaries === "ai"; ink: root.surface
+                  onClicked: root.fleet.run(["limits", "--summaries", "ai"], "AI summaries on: Haiku rewrites status lines every 20s")
+                }
+              }
+            }
+
+            Banner {
+              Layout.fillWidth: true
+              visible: root.fleet.stale
+              text: "The ai-fleet daemon isn't answering. Start it with: systemctl --user start ai-fleet"
+              tone: root.fleet.red; font: root.fontFamily
+            }
+
+            // ---- usage limit: agents stopped by it, and the button that resumes them
+            Rectangle {
+              id: limitBox
+              Layout.fillWidth: true
+              Layout.leftMargin: Style.space(14)
+              Layout.rightMargin: Style.space(14)
+              visible: root.limited || root.limitStopped > 0
+              readonly property color tone: root.limited ? root.fleet.orange : root.fleet.green
+              implicitHeight: limitRow.implicitHeight + Style.space(10)
+              radius: 3
+              color: Qt.rgba(tone.r, tone.g, tone.b, 0.09)
+              border.color: Qt.rgba(tone.r, tone.g, tone.b, 0.3)
+              border.width: 1
+              RowLayout {
+                id: limitRow
+                anchors.verticalCenter: parent.verticalCenter
+                x: Style.space(10)
+                width: parent.width - 2 * x
+                spacing: Style.space(10)
+                Text {
+                  Layout.fillWidth: true
+                  wrapMode: Text.Wrap
+                  color: limitBox.tone
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.bodySmall
+                  text: root.limited
+                    ? "Usage limit reached · resets " + root.clock(root.usage.until) + ". "
+                      + root.limitStopped + " agent" + (root.limitStopped === 1 ? "" : "s") + " stopped; no new tickets start until then."
+                    : "Usage limit has reset. " + root.limitStopped + " agent" + (root.limitStopped === 1 ? " is" : "s are") + " waiting to continue."
+                }
+                SmallButton {
+                  visible: root.limitStopped > 0
+                  text: "▶ Continue " + root.limitStopped + (root.limitStopped === 1 ? " agent" : " agents")
+                  font: root.fontFamily
+                  tone: root.limited ? root.dim : root.fleet.green
+                  primary: !root.limited
+                  ink: root.surface
+                  onClicked: root.fleet.run(["continue"], "Resumed agents stopped by the usage limit")
+                }
+              }
+            }
+
+            // ---- needs you
+            RowLayout {
+              Layout.fillWidth: true
+              Layout.leftMargin: Style.space(14)
+              Layout.rightMargin: Style.space(14)
+              Layout.topMargin: Style.space(4)
+              visible: attentionModel.count > 0
+              spacing: Style.space(8)
+              Text { text: "NEEDS YOU · " + attentionModel.count; color: root.fleet.red; font.family: root.fontFamily; font.pixelSize: Style.font.caption; font.letterSpacing: 2 }
+              Rectangle { Layout.fillWidth: true; height: 1; color: Qt.rgba(root.fleet.red.r, root.fleet.red.g, root.fleet.red.b, 0.35) }
+            }
+            Repeater {
+              model: attentionModel
+              AttentionCard {
+                required property var model
+                Layout.fillWidth: true
+                Layout.leftMargin: Style.space(14)
+                Layout.rightMargin: Style.space(14)
+                item: model
+                view: root
+              }
+            }
+
+            // ---- runs
+            Repeater {
+              model: runsModel
+              ColumnLayout {
+                required property var model
+                Layout.fillWidth: true
+                spacing: 0
+                Rectangle { Layout.fillWidth: true; Layout.topMargin: Style.space(6); height: 1; color: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.1) }
+                Run { Layout.fillWidth: true; runId: model.key; view: root }
+              }
+            }
+
+            // ---- your sessions
+            RowLayout {
+              Layout.fillWidth: true
+              Layout.leftMargin: Style.space(14)
+              Layout.rightMargin: Style.space(14)
+              Layout.topMargin: Style.space(10)
+              visible: sessionRows.count > 0
+              spacing: Style.space(8)
+              Text { text: "YOUR SESSIONS"; color: root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.caption; font.letterSpacing: 2 }
+              Rectangle { Layout.fillWidth: true; height: 1; color: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.1) }
+            }
+            ColumnHeader {
+              Layout.fillWidth: true
+              Layout.rightMargin: Style.space(10)
+              visible: sessionRows.count > 0
               view: root
             }
-          }
-
-          // ---- runs
-          Repeater {
-            model: runsModel
-            ColumnLayout {
-              required property var model
-              Layout.fillWidth: true
-              spacing: 0
-              Rectangle { Layout.fillWidth: true; Layout.topMargin: Style.space(6); height: 1; color: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.1) }
-              Run { Layout.fillWidth: true; runId: model.key; view: root }
+            Repeater {
+              model: sessionRows
+              AgentRow {
+                required property var model
+                Layout.fillWidth: true
+                row: model
+                view: root
+              }
             }
-          }
 
-          // ---- your sessions
-          RowLayout {
-            Layout.fillWidth: true
-            Layout.leftMargin: Style.space(14)
-            Layout.rightMargin: Style.space(14)
-            Layout.topMargin: Style.space(10)
-            visible: sessionRows.count > 0
-            spacing: Style.space(8)
-            Text { text: "YOUR SESSIONS"; color: root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.caption; font.letterSpacing: 2 }
-            Rectangle { Layout.fillWidth: true; height: 1; color: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.1) }
-          }
-          ColumnHeader {
-            Layout.fillWidth: true
-            Layout.rightMargin: Style.space(10)
-            visible: sessionRows.count > 0
-            view: root
-          }
-          Repeater {
-            model: sessionRows
-            AgentRow {
-              required property var model
-              Layout.fillWidth: true
-              row: model
-              view: root
-            }
-          }
-
-          Text {
-            Layout.fillWidth: true
-            Layout.margins: Style.space(14)
-            visible: !root.fleet.stale && runsModel.count === 0 && sessionRows.count === 0
-            text: "Nothing running. Start a run with /implement-orchestrator in a repo, or `fleet cc` for a session that keeps running after you close its terminal."
-            wrapMode: Text.Wrap
-            color: root.dim
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.body
-          }
-
-          // ---- footer
-          Rectangle { Layout.fillWidth: true; Layout.topMargin: Style.space(8); height: 1; color: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.1) }
-          RowLayout {
-            Layout.fillWidth: true
-            Layout.leftMargin: Style.space(14)
-            Layout.rightMargin: Style.space(14)
-            Layout.bottomMargin: Style.space(4)
             Text {
               Layout.fillWidth: true
-              text: root.toastText !== "" ? root.toastText : "j/k move   l/h expand   z all   o open in terminal   x kill   r retry   esc close"
-              color: root.toastText !== "" ? (root.toastError ? root.fleet.red : root.fleet.accent) : root.dim
-              elide: Text.ElideRight
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.bodySmall
-            }
-            Text {
-              text: root.fleet.stale ? "daemon down" : "nothing is ever pushed"
+              Layout.margins: Style.space(14)
+              visible: !root.fleet.stale && runsModel.count === 0 && sessionRows.count === 0
+              text: "Nothing running. Start a run with /implement-orchestrator in a repo, or `fleet cc` for a session that keeps running after you close its terminal."
+              wrapMode: Text.Wrap
               color: root.dim
               font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
+              font.pixelSize: Style.font.body
             }
+          }
+
+          TrainTab {
+            Layout.fillWidth: true
+            visible: root.tab === "train"
+            view: root
+            runs: root.fleet.trainingRuns
+          }
+        }
+      }
+
+      // ---- footer, always in view: toast or key hints, then the tabs
+      ColumnLayout {
+        id: footer
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        spacing: Style.space(6)
+        Rectangle { Layout.fillWidth: true; height: 1; color: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.1) }
+        RowLayout {
+          Layout.fillWidth: true
+          Layout.leftMargin: Style.space(14)
+          Layout.rightMargin: Style.space(14)
+          Layout.bottomMargin: Style.space(4)
+          Text {
+            Layout.fillWidth: true
+            text: root.toastText !== "" ? root.toastText : (root.tab === "train" ? "click a run for its curves   right-click stop or remove   t agents   esc close"
+                         : "j/k move   l/h expand   z all   o open in terminal   x kill   r retry   t training   esc close")
+            color: root.toastText !== "" ? (root.toastError ? root.fleet.red : root.fleet.accent) : root.dim
+            elide: Text.ElideRight
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.bodySmall
+          }
+          Text {
+            text: root.fleet.stale ? "daemon down" : "nothing is ever pushed"
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+        }
+        Row {
+          Layout.leftMargin: Style.space(14)
+          Layout.bottomMargin: Style.space(8)
+          spacing: 0
+          SmallButton {
+            text: "Agentic"; font: root.fontFamily
+            tone: root.tab === "agentic" ? root.fg : root.dim
+            primary: root.tab === "agentic"; ink: root.surface
+            onClicked: root.setTab("agentic")
+          }
+          SmallButton {
+            readonly property int going: root.fleet.trainingRuns.filter(function(r) { return r.status === "running" }).length
+            text: "AI-train" + (going ? " · " + going : ""); font: root.fontFamily
+            tone: root.tab === "train" ? root.fg : root.dim
+            primary: root.tab === "train"; ink: root.surface
+            onClicked: root.setTab("train")
           }
         }
       }
