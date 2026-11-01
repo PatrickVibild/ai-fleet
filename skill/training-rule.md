@@ -13,6 +13,6 @@ fleet train watch [--host SSH_ALIAS] --dir LOGDIR --tensorboard PATH/TO/tensorbo
 
 - Leave out `--host` for this machine.
 - Tags are what the framework actually writes; read its logger if unsure. `--train-loss` and `--val-loss` may be globs whose matches get summed (`train/*`) for frameworks with no total. `--map` must be logged once per validation with the epoch as its step.
-- Pass `--class-map` only if the training already logs per-class mAP. Never add per-class logging just for this.
+- Pass `--class-map` only if per-class mAP reaches TensorBoard. If the training logs it there, map those tags. If it doesn't but already saves per-class results to disk at each validation, run a small background converter on the training machine that writes them as scalars to a new events file in the run's own folder (epoch as step), and exits when the training does. Never add computation to the training or change it for this; if the results don't already exist, go without.
 - `--stop` runs on the training machine with `{run}` replaced by the TensorBoard run name, which is the run's path under `--dir`. It must stop that run only, including its workers, and let a queue carry on. Match on something unique to the run, and bracket the first letter of a `pkill -f` pattern so it can't match its own shell.
 - Don't run this for training the user started themselves.

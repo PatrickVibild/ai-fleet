@@ -1186,6 +1186,16 @@ class TrainingActions(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ValueError, "capture group"):
             await self.t.watch(req, None)
 
+    async def test_a_tensorboard_without_reload_multifile_gets_replaced(self):
+        calls = []
+
+        async def fake_sh(host, script, timeout=30):
+            calls.append(script)
+            return 0, ""
+        with mock.patch.object(training, "sh", fake_sh):
+            self.assertIsNone(await self.t.tb_port(self.t.watches["w"]))
+        self.assertIn('*reload_multifile*) ;; *) kill "$p"', calls[0])
+
     def test_tilde_still_expands(self):
         self.assertEqual(training.path_expr("~/a b"), "\"$HOME\"'/a b'")
         self.assertEqual(training.path_expr("/a"), "/a")

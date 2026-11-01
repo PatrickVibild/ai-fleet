@@ -58,7 +58,8 @@ says which tags mean what, and every TensorBoard run under `--dir` becomes a row
 by themselves. Training you start yourself isn't tracked.
 
 A row shows the machine, status, epoch, ETA, mAP and a small loss curve. Click it for the curves, every other tag,
-and per-class mAP if the run was registered with `--class-map`. Right-click a running or stalled run for **Stop**,
+and per-class mAP if the run was registered with `--class-map` (the agent may run a small converter if the training
+saves per-class results to disk but doesn't log them). Right-click a running or stalled run for **Stop**,
 which runs its `--stop` command at once; the rest of a queue carries on. Right-click anything not running for
 **Remove**, which clears it from ai-fleet and leaves the logs on the training machine. Removing a watch's last run
 stops its TensorBoard, so a queue still between runs then needs registering again.

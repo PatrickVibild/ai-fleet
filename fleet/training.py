@@ -241,10 +241,13 @@ class Training:
         return f'"$HOME/.cache/ai-fleet/tb-{wid}"'
 
     async def tb_port(self, w):
-        """The port of this watch's TensorBoard if it's alive, else None. Raises OSError if the host can't be reached."""
+        """The port of this watch's TensorBoard if it's alive, else None. Raises OSError if the host can't be reached.
+        One started without --reload_multifile is stopped so it comes back with it: without that flag, TensorBoard
+        stops following training's log as soon as something else writes a newer file beside it."""
         files = self._tb_files(w["id"])
         rc, out = await sh(w.get("host"), f'''f={files}; p=$(cat "$f.pid" 2>/dev/null) || exit 0
-ps -o args= -p "$p" 2>/dev/null | grep -q tensorboard || exit 0
+a=$(ps -o args= -p "$p" 2>/dev/null); case "$a" in *tensorboard*) ;; *) exit 0;; esac
+case "$a" in *reload_multifile*) ;; *) kill "$p"; exit 0;; esac
 sed -n 's|.*http://[^:]*:\\([0-9][0-9]*\\)/.*|PORT=\\1|p' "$f.log" | head -1''')
         if rc in (124, 255):
             raise OSError(out or f"can't reach {w.get('host')}")
@@ -256,7 +259,7 @@ sed -n 's|.*http://[^:]*:\\([0-9][0-9]*\\)/.*|PORT=\\1|p' "$f.log" | head -1''')
         rc, out = await sh(w.get("host"), f'''f={files}; mkdir -p "$(dirname "$f")"; tb={path_expr(w["tensorboard"])}
 [ -x "$tb" ] || command -v "$tb" >/dev/null 2>&1 || {{ echo "no tensorboard at $tb"; exit 3; }}
 : > "$f.log"
-setsid nohup "$tb" --logdir {path_expr(w["dir"])} --host 127.0.0.1 --port 0 --reload_interval 15 >"$f.log" 2>&1 </dev/null &
+setsid nohup "$tb" --logdir {path_expr(w["dir"])} --host 127.0.0.1 --port 0 --reload_interval 15 --reload_multifile true >"$f.log" 2>&1 </dev/null &
 echo $! > "$f.pid"
 for i in $(seq 1 60); do
   grep -q 'http://' "$f.log" && exit 0
