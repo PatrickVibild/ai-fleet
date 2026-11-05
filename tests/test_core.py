@@ -286,6 +286,36 @@ class TicketCommand(unittest.TestCase):
         self.assertTrue(self.fleet.implementor_prompt(self.run, self.run.ticket("2")).startswith(
             "/mp:implement ticket #2: Tooling"))
 
+    def gone(self, *tickets):
+        """Tickets 1..n all ask for /write-section, which isn't installed; prompts them each twice."""
+        from fleet import daemon
+        notes = []
+        self.addCleanup(setattr, daemon, "notify", daemon.notify)
+        daemon.notify = lambda *a, **kw: notes.append(a)
+        self.run = Run.from_plan({"repo": "/tmp/x", "base": "main", "tickets": [
+            {"id": i, "title": "Methods", "implement_command": "/write-section --draft"} for i in tickets]})
+        prompts = [self.fleet.implementor_prompt(self.run, self.run.ticket(i)) for i in tickets * 2]
+        events = [json.loads(e) for e in (self.run.dir / "events.jsonl").read_text().splitlines()]
+        return prompts, [e for e in events if e["type"] == "command_missing"], notes
+
+    def test_a_command_gone_since_submit_falls_back_to_plain_instructions(self):
+        prompts, _, _ = self.gone("1")
+        for p in prompts:
+            self.assertTrue(p.startswith("Implement ticket #1: Methods"), p)
+            self.assertNotIn("/mp:implement", p)
+
+    def test_a_command_gone_since_submit_is_reported_once(self):
+        _, events, notes = self.gone("1")
+        self.assertEqual([(e["ticket"], e["setting"]) for e in events], [("1", "implement_command")])
+        self.assertIn("/write-section", events[0]["detail"])
+        self.assertEqual(len(notes), 1)
+        self.assertIn("#1", notes[0][0])
+
+    def test_each_ticket_with_the_gone_command_is_reported(self):
+        _, events, notes = self.gone("1", "2")
+        self.assertEqual(sorted(e["ticket"] for e in events), ["1", "2"])
+        self.assertEqual(len(notes), 2)
+
     def test_a_retry_starts_with_the_command_again_and_a_sendback_does_not(self):
         f = self.fleet
         f.runs, f.locks, f.scheduling = {self.run.id: self.run}, {}, asyncio.Lock()

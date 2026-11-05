@@ -454,9 +454,24 @@ class Fleet:
                                                       f"fix {key} in {paths.LIMITS}.")
         return ""
 
+    def ticket_command(self, run, t):
+        """Like command(), for a ticket's own implement_command: "" when it's gone, never the global one,
+        since a ticket that asked for /write-section mustn't quietly run /implement."""
+        cmd = t["implement_command"]
+        why = skills.missing(cmd, run.d["repo"])
+        if not why:
+            return cmd
+        key = f"ticket:{t['id']}"
+        if key not in run.d.setdefault("missingCommands", []):
+            run.d["missingCommands"].append(key)
+            run.event("command_missing", setting="implement_command", ticket=t["id"], detail=why)
+            notify(f"{run.d['name']}: #{t['id']}'s implement_command is gone",
+                   f"{why}. Its sessions get plain instructions instead.")
+        return ""
+
     def implementor_prompt(self, run, t):
         ref = f" ({t['ref']})" if t.get("ref") else ""
-        cmd = t.get("implement_command") or self.command(run, "implement_command")
+        cmd = self.ticket_command(run, t) if t.get("implement_command") else self.command(run, "implement_command")
         return (f"{cmd + ' ticket' if cmd else 'Implement ticket'} #{t['id']}{ref}: {t['title']}\n\n{t['body']}\n\n"
                 f"You are running unattended under ai-fleet. Ask questions only with the AskUserQuestion tool. "
                 f"Commit your work on the current branch. Never push, and don't merge into `{run.d['base']}`: "
