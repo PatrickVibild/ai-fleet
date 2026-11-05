@@ -11,21 +11,24 @@ The `fleet` CLI is your only interface to the daemon (`fleet --help`).
 ## 1. Build the plan
 
 1. Run `fleet status`. If it says the daemon isn't running, tell the user to run `~/repos/ai-fleet/install.sh` (or `systemctl --user start ai-fleet`) and stop.
-2. Collect the tickets the user named (a feature folder, issue numbers, a label, or "the open ones"), with each ticket's full text and its **blocked by** edges. How depends on the repo's tracker: read `docs/agents/issue-tracker.md`, then follow [TICKETS.md](TICKETS.md). Skip tickets already done or closed, and drop edges to them.
+2. Collect the tickets the user named (a feature folder, issue numbers, a label, or "the open ones"), with each ticket's full text, its **blocked by** edges, and its implement command if the repo maps ticket kinds to commands. How depends on the repo's tracker: read `docs/agents/issue-tracker.md`, then follow [TICKETS.md](TICKETS.md). Skip tickets already done or closed, and drop edges to them.
 3. Find the **checks** from the repo itself (`package.json` scripts, `Makefile`, `justfile`, `pyproject.toml`, CI config, `CLAUDE.md`):
    - `test`: the suite an implementor must pass before its ticket counts as done.
    - `quick`: fast and broad (typecheck plus a fast test pass); runs on the base branch after every merge.
    - `full`: everything; runs once when the last ticket merges.
-4. Show the user the plan in one compact list: each ticket with its blockers, then the three check commands and the base branch. Wait for a go. Fix what they correct.
+4. Show the user the plan in one compact list: each ticket with its blockers (and its `implement_command` when it has one), then the three check commands and the base branch. Wait for a go. Fix what they correct.
 5. Submit it, from the repo root, as JSON on stdin:
 
    ```
    fleet submit - <<'EOF'
    {"repo": "<abs path>", "base": "<branch>", "name": "<feature>",
     "checks": {"test": "...", "quick": "...", "full": "..."},
-    "tickets": [{"id": "3", "title": "...", "body": "<full ticket text>", "ref": "<path or issue url>", "blockedBy": ["1"]}]}
+    "tickets": [{"id": "3", "title": "...", "body": "<full ticket text>", "ref": "<path or issue url>", "blockedBy": ["1"],
+                 "implement_command": "/write-section"}]}
    EOF
    ```
+
+   Leave out `implement_command` on tickets that have none; they use the global one.
 
    The reply names the run id. If it refuses (dirty checkout, wrong branch, no commits), relay its message and stop.
 
@@ -60,7 +63,7 @@ Read `last_message`. A question or a blocker the sources settle: `fix` with the 
 ### Everything else
 
 - `final_check`: every ticket is merged and the daemon is running the `full` check on the base branch. Tell the user in one line that the tickets are in and the full suite is running, with the command; it can take a while. Keep watching: `run_done` or a `held` (a fixer is on a red suite) follows.
-- `command_missing`: the configured `implement_command` or `merge_command`, or a ticket's own `implement_command` (`ticket` is set then), is no longer installed (a plugin update dropped it). Those sessions now get plain instructions instead. Tell the user in one line, quoting `detail`.
+- `command_missing`: the configured `implement_command` or `merge_command`, or a ticket's own `implement_command` (then `ticket` is set), is no longer installed (a plugin update dropped it). Those sessions now get plain instructions instead. Tell the user in one line, quoting `detail`.
 - `attention`: relay it in one line (the panel has the buttons). Kind `stalled` (or a `merge_failed` whose message says the merger never started or hasn't replied) means the session sits idle: say so, and that they can open it or retry.
 - `held`, `conflict`, `green_again`, `verdict_timeout`: one line each, or none if nothing changed for the user.
 - `run_done`: report tickets merged and any kept worktrees, and stop watching. You're done. Don't push yourself: the Fleet panel shows whether the base branch is pushed and pushes it on a click (or `fleet push <repo>`), and says why if the push fails.
