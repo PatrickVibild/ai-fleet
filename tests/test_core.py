@@ -63,6 +63,12 @@ class RunGraph(unittest.TestCase):
         self.assertEqual(again.ticket("14")["blockedBy"], ["12", "13"])
         self.assertEqual(again.ticket("14")["state"], WAIT)
 
+    def test_keeps_a_tickets_implement_command(self):
+        r = Run.from_plan({"repo": "/x", "tickets": [{"id": 1, "implement_command": " /write-section --draft "},
+                                                     {"id": 2}]})
+        self.assertEqual(r.ticket("1")["implement_command"], "/write-section --draft")
+        self.assertEqual(r.ticket("2")["implement_command"], "")
+
 
 def entry(kind, ts, content, **kw):
     return {"type": kind, "timestamp": ts, "message": {"content": content, **kw}}
@@ -224,23 +230,28 @@ class TestCounts(unittest.TestCase):
                          {"passed": 9, "failed": 2, "total": 11, "cmd": "pytest -q"})
 
 
+def fake_skills(test):
+    """Installs plugin mp 1.3.1 with /mp:implement, and a user skill /mine, under a scratch HOME."""
+    root = Path(tempfile.mkdtemp())
+    for attr in ("HOME", "CLAUDE_PLUGINS"):
+        test.addCleanup(setattr, paths, attr, getattr(paths, attr))
+    paths.HOME = root / "home"
+    paths.CLAUDE_PLUGINS = paths.HOME / ".claude/plugins"
+    install = root / "cache/mp/1.3.1"
+    (install / "skills/engineering/implement").mkdir(parents=True)
+    (install / "skills/engineering/implement/SKILL.md").write_text("---\nname: implement\n---\n")
+    (install / ".claude-plugin").mkdir()
+    (install / ".claude-plugin/plugin.json").write_text(json.dumps({"skills": ["./skills/engineering/implement"]}))
+    paths.CLAUDE_PLUGINS.mkdir(parents=True)
+    (paths.CLAUDE_PLUGINS / "installed_plugins.json").write_text(json.dumps(
+        {"plugins": {"mp@official": [{"installPath": str(install), "version": "1.3.1"}]}}))
+    (paths.HOME / ".claude/skills/mine").mkdir(parents=True)
+    (paths.HOME / ".claude/skills/mine/SKILL.md").write_text("x")
+
+
 class Skills(unittest.TestCase):
     def setUp(self):
-        root = Path(tempfile.mkdtemp())
-        for attr in ("HOME", "CLAUDE_PLUGINS"):
-            self.addCleanup(setattr, paths, attr, getattr(paths, attr))
-        paths.HOME = root / "home"
-        paths.CLAUDE_PLUGINS = paths.HOME / ".claude/plugins"
-        install = root / "cache/mp/1.3.1"
-        (install / "skills/engineering/implement").mkdir(parents=True)
-        (install / "skills/engineering/implement/SKILL.md").write_text("---\nname: implement\n---\n")
-        (install / ".claude-plugin").mkdir()
-        (install / ".claude-plugin/plugin.json").write_text(json.dumps({"skills": ["./skills/engineering/implement"]}))
-        paths.CLAUDE_PLUGINS.mkdir(parents=True)
-        (paths.CLAUDE_PLUGINS / "installed_plugins.json").write_text(json.dumps(
-            {"plugins": {"mp@official": [{"installPath": str(install), "version": "1.3.1"}]}}))
-        (paths.HOME / ".claude/skills/mine").mkdir(parents=True)
-        (paths.HOME / ".claude/skills/mine/SKILL.md").write_text("x")
+        fake_skills(self)
 
     def test_finds_plugin_skills_listed_in_the_manifest(self):
         self.assertIsNone(skills.missing("/mp:implement"))
@@ -255,6 +266,61 @@ class Skills(unittest.TestCase):
         self.assertIsNone(skills.missing("/mine"))
         self.assertIsNone(skills.missing("/implement"))
         self.assertIn("isn't an installed", skills.missing("/nope"))
+
+
+class TicketCommand(unittest.TestCase):
+    """A ticket's implement_command starts its implementor's first prompt instead of the global one."""
+
+    def setUp(self):
+        fake_skills(self)
+        self.fleet = Fleet.__new__(Fleet)
+        self.fleet.cfg = {**config.DEFAULTS, "implement_command": "/mp:implement"}
+        self.run = Run.from_plan({"repo": "/tmp/x", "base": "main", "tickets": [
+            {"id": "1", "title": "Methods", "implement_command": "/mine --figure"}, {"id": "2", "title": "Tooling"}]})
+
+    def test_prompt_starts_with_the_tickets_command(self):
+        self.assertTrue(self.fleet.implementor_prompt(self.run, self.run.ticket("1")).startswith(
+            "/mine --figure ticket #1: Methods"))
+
+    def test_prompt_without_one_starts_with_the_global_command(self):
+        self.assertTrue(self.fleet.implementor_prompt(self.run, self.run.ticket("2")).startswith(
+            "/mp:implement ticket #2: Tooling"))
+
+    def test_a_retry_starts_with_the_command_again_and_a_sendback_does_not(self):
+        f = self.fleet
+        f.runs, f.locks, f.scheduling = {self.run.id: self.run}, {}, asyncio.Lock()
+        f.cfg["orchestrators"] = 1
+        f.usage = lambda: {"limited": False}
+        f.write_settings = lambda *a, **k: "/dev/null"
+        f.log = lambda *a: None
+        self.run.d["status"] = "active"
+        self.run.ticket("2")["blockedBy"] = ["1"]
+        prompts = []
+
+        async def spawn_bg(**kw):
+            prompts.append(kw["prompt"])
+            return f"s{len(prompts)}"
+
+        async def stop(short):
+            return 0, ""
+
+        async def add_worktree(repo, name, base):
+            return name
+
+        async def go():
+            await f.schedule()
+            t = self.run.ticket("1")
+            t["session"]["sessionId"] = "sid1"
+            await f.ctl({"action": "sendback", "run": self.run.id, "ticket": "1", "note": "Fix the caption."})
+            await f.ctl({"action": "retry", "run": self.run.id, "ticket": "1"})
+            await f.schedule()
+        with mock.patch.object(claude, "spawn_bg", spawn_bg), mock.patch.object(claude, "stop", stop), \
+                mock.patch("fleet.daemon.git.add_worktree", add_worktree):
+            asyncio.run(go())
+        self.assertEqual(len(prompts), 3)
+        self.assertTrue(prompts[0].startswith("/mine --figure ticket #1"))
+        self.assertEqual(prompts[1], "Fix the caption.")
+        self.assertTrue(prompts[2].startswith("/mine --figure ticket #1"))
 
 
 class Schedule(unittest.TestCase):
@@ -793,6 +859,43 @@ class MergedAndPushed(GitRepo):
         self.assertTrue(f.git_view(str(self.repo))["pushed"])
         with self.assertRaisesRegex(ValueError, "isn't a finished run"):
             self.asyncio.run(f.push(str(self.root)))
+
+
+class SubmitTicketCommands(GitRepo):
+    """Submit refuses a plan whose implement commands aren't installed, before any session starts."""
+
+    def setUp(self):
+        super().setUp()
+        fake_skills(self)
+        self.fleet = Fleet.__new__(Fleet)
+        self.fleet.cfg = {**config.DEFAULTS, "implement_command": "/mp:implement", "merge_command": ""}
+        self.fleet.runs = {}
+
+        async def schedule():
+            pass
+        self.fleet.schedule = schedule
+
+    def submit(self, *commands):
+        tickets = [{"id": f"#{i}", "title": "T", **({"implement_command": c} if c is not None else {})}
+                   for i, c in enumerate(commands, 11)]
+        return self.asyncio.run(self.fleet.submit({"repo": str(self.repo), "orchestrator": "o", "tickets": tickets},
+                                                  None))
+
+    def test_refuses_a_ticket_command_that_isnt_installed_naming_the_ticket(self):
+        with self.assertRaisesRegex(ValueError, r"ticket #12 implement_command `/write-section` isn't an installed"):
+            self.submit(None, "/write-section --draft")
+        self.assertEqual(self.fleet.runs, {})
+
+    def test_accepts_a_skill_that_only_the_repo_has(self):
+        (self.repo / ".claude/skills/write-section").mkdir(parents=True)
+        (self.repo / ".claude/skills/write-section/SKILL.md").write_text("x")
+        self.assertIn("run", self.submit("/write-section --draft", None))
+
+    def test_the_global_command_is_needed_only_by_tickets_without_their_own(self):
+        self.fleet.cfg["implement_command"] = "/mp:gone"
+        self.assertIn("run", self.submit("/mine", "/mp:implement --figure"))
+        with self.assertRaisesRegex(ValueError, r"^implement_command `/mp:gone`"):
+            self.submit("/mine", "")
 
 
 class Worktrees(GitRepo):

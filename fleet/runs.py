@@ -28,7 +28,7 @@ class Run:
     # -- construction ---------------------------------------------------------
     @classmethod
     def from_plan(cls, plan: dict, orchestrator=None):
-        """plan = {repo, base?, name?, checks?: {test, quick, full}, tickets: [{id, title, body?, blockedBy?: []}]}"""
+        """plan = {repo, base?, name?, checks?: {test, quick, full}, tickets: [{id, title, body?, blockedBy?: [], implement_command?}]}"""
         repo = str(plan["repo"]).rstrip("/")
         name = plan.get("name") or repo.rsplit("/", 1)[-1]
         tickets = {}
@@ -36,6 +36,7 @@ class Run:
             tid = str(t["id"]).lstrip("#")
             tickets[tid] = {"id": tid, "title": t.get("title", f"Ticket {tid}"), "body": t.get("body", ""),
                             "ref": t.get("ref", ""), "blockedBy": [str(b).lstrip("#") for b in t.get("blockedBy", [])],
+                            "implement_command": (t.get("implement_command") or "").strip(),
                             "state": WAIT, "attempt": 0, "fixRound": 0, "session": None, "attn": None, "log": []}
         unknown = {b for t in tickets.values() for b in t["blockedBy"] if b not in tickets}
         if unknown:
