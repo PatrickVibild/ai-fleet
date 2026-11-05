@@ -59,7 +59,8 @@ def cmd_status(a):
                   if r["finalCheck"] == "running" else "  every ticket merged and green; cleaning up worktrees")
         for t in r["tickets"]:
             blocked = f" (blocked by {', '.join('#' + b for b in t['blockedBy'])})" if t["blockedBy"] else ""
-            print(f"  #{t['id']:<5} {t['state']:<9} {t['title']}{blocked}")
+            cmd = f"  {t['implement_command']}" if t.get("implement_command") else ""
+            print(f"  #{t['id']:<5} {t['state']:<9} {t['title']}{cmd}{blocked}")
     if st["attention"]:
         print("\nneeds you:")
         for x in st["attention"]:
