@@ -58,6 +58,30 @@ QtObject {
     onLoadFailed: root.trainingRuns = []
   }
 
+  // your todos; the CLI writes this file directly, so they work while the daemon is down
+  property var todos: []
+  readonly property int overdue: todos.filter(function(t) { return !t.done && t.due && t.due <= nowSec }).length
+  property FileView todosFile: FileView {
+    path: root.stateDir + "/todos.json"
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: {
+      try { root.todos = JSON.parse(text()).todos || [] } catch (e) { }
+    }
+    onLoadFailed: root.todos = []
+  }
+
+  // the How-to tab's playbooks and the skill names installed, from `fleet howto`; reread whenever the tab opens
+  property var howto: ({ docs: [], skills: [] })
+  property Process howtoProc: Process {
+    command: [root.fleetBin, "howto"]
+    stdout: StdioCollector {
+      onStreamFinished: { try { root.howto = JSON.parse(text) } catch (e) { } }
+    }
+  }
+  function refreshHowto() { howtoProc.running = true }
+
   property FileView colorsFile: FileView {
     path: Color.currentThemePath + "/colors.toml"
     watchChanges: true

@@ -27,8 +27,8 @@ Panel {
   property string focusedKey: ""
   property string confirmKill: ""
   property bool typing: false
-  property string tab: "agentic"  // the bottom buttons: "agentic" or "train"
-  function setTab(t) { tab = t; closeMenu(); flick.contentY = 0 }
+  property string tab: "agentic"  // the bottom buttons: "agentic" and "train" are live, "todo" and "howto" are yours
+  function setTab(t) { tab = t; closeMenu(); flick.contentY = 0; if (t === "howto") fleet.refreshHowto() }
   property var rowIndex: ({})     // key -> row object, for keyboard actions
   property var order: []          // visible row keys, top to bottom
   property var rowItems: ({})     // key -> AgentRow item, for scrolling the focused row into view
@@ -166,6 +166,12 @@ Panel {
   }
   function menuItems(row) {
     var out = []
+    if (row.isTodo) {
+      out.push({ label: "Edit", act: "todo-edit" })
+      if (row.md) out.push({ label: "Open " + U.baseName(row.md) + " in editor", act: "todo-editor" })
+      out.push({ label: "Delete", act: "todo-delete", danger: true })
+      return out
+    }
     if (row.isTrain) {
       var going = row.status === "running" || row.status === "stalled"
       if (going) out.push({ label: "Stop training", act: "train-stop", danger: true })
@@ -199,7 +205,10 @@ Panel {
     if (!row) return
     if (act === "confirm") { menuConfirm = true; return }
     closeMenu()
-    if (act === "train-stop") fleet.run(["train", "stop", row.id], "Stopped " + row.name, undefined, "Stop failed")
+    if (act === "todo-edit") todoTab.startEdit(row)
+    else if (act === "todo-editor") todoTab.editInEditor(row.md)
+    else if (act === "todo-delete") fleet.run(["todo", "rm", String(row.id)], "Deleted")
+    else if (act === "train-stop") fleet.run(["train", "stop", row.id], "Stopped " + row.name, undefined, "Stop failed")
     else if (act === "train-remove") fleet.run(["train", "remove", row.id], "Removed " + row.name)
     else if (act === "open") openRow(row)
     else if (act === "retry") retry(row)
@@ -321,6 +330,7 @@ Panel {
       blocked: root.typing
 
       onMoveRequested: function(dx, dy) {
+        if (root.tab === "howto" && dx !== 0) return howtoTab.step(dx)
         if (root.tab !== "agentic") return
         if (dy !== 0) {
           root.moveFocus(dy)
@@ -345,6 +355,8 @@ Panel {
       onTabRequested: function(direction) { root.switchPanel(direction) }
       onTextKey: function(t) {
         if (t === "t") return root.setTab(root.tab === "agentic" ? "train" : "agentic")
+        if (t === "d") return root.setTab("todo")
+        if (t === "?") return root.setTab("howto")
         if (root.tab !== "agentic") return
         if (t === "z") return root.setAllExpanded(!root.anyExpanded)
         var row = root.focused()
@@ -587,6 +599,23 @@ Panel {
             view: root
             runs: root.fleet.trainingRuns
           }
+
+          TodoTab {
+            id: todoTab
+            Layout.fillWidth: true
+            visible: root.tab === "todo"
+            view: root
+            todos: root.fleet.todos
+          }
+
+          HowtoTab {
+            id: howtoTab
+            Layout.fillWidth: true
+            visible: root.tab === "howto"
+            view: root
+            docs: root.fleet.howto.docs || []
+            skills: root.fleet.howto.skills || []
+          }
         }
       }
 
@@ -605,8 +634,11 @@ Panel {
           Layout.bottomMargin: Style.space(4)
           Text {
             Layout.fillWidth: true
-            text: root.toastText !== "" ? root.toastText : (root.tab === "train" ? "click a run for its curves   right-click stop or remove   t agents   esc close"
-                         : "j/k move   l/h expand   z all   o open in terminal   x kill   r retry   t training   esc close")
+            text: root.toastText !== "" ? root.toastText : ({
+                train: "click a run for its curves   right-click stop or remove   t agents   esc close",
+                todo: "click to tick off   right-click edit or delete   due: 14:00, tomorrow 9:00, +2h   t agents   esc close",
+                howto: "h/l playbook   click a skill to copy it   t agents   esc close"
+              })[root.tab] || "j/k move   l/h expand   z all   o open in terminal   x kill   r retry   t training   d todo   ? how-to   esc close"
             color: root.toastText !== "" ? (root.toastError ? root.fleet.red : root.fleet.accent) : root.dim
             elide: Text.ElideRight
             font.family: root.fontFamily
@@ -635,6 +667,28 @@ Panel {
             tone: root.tab === "train" ? root.fg : root.dim
             primary: root.tab === "train"; ink: root.surface
             onClicked: root.setTab("train")
+          }
+          // your own tabs, apart from the live ones: outlined rather than filled when picked
+          Repeater {
+            model: [{ tab: "todo", label: "Todo" }, { tab: "howto", label: "How-to" }]
+            Row {
+              id: ownTab
+              required property var modelData
+              readonly property bool picked: root.tab === modelData.tab
+              readonly property int overdue: modelData.tab === "todo" ? root.fleet.overdue : 0
+              spacing: 0
+              Rectangle {
+                anchors.verticalCenter: parent.verticalCenter
+                width: 1 + 2 * Style.space(10); height: Style.space(16); color: "transparent"
+                Rectangle { anchors.centerIn: parent; width: 1; height: parent.height; color: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.25) }
+              }
+              SmallButton {
+                text: ownTab.modelData.label + (ownTab.overdue ? " · " + ownTab.overdue : ""); font: root.fontFamily
+                tone: ownTab.overdue ? root.fleet.red : ownTab.picked ? root.fg : root.dim
+                selected: ownTab.picked; ink: root.surface
+                onClicked: root.setTab(ownTab.modelData.tab)
+              }
+            }
           }
         }
       }

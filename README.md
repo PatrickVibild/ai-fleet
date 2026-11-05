@@ -45,7 +45,8 @@ all merged and usage-limit popups stay on the desktop.
 
 ## AI training
 
-The panel has two tabs at the bottom: **Agentic** and **AI-train** (or press `t`). `install.sh` adds a short rule
+The panel's footer has the live tabs, **Agentic** and **AI-train** (`t` switches between them), and then,
+set apart, your own **Todo** (`d`) and **How-to** (`?`). `install.sh` adds a short rule
 (`skill/training-rule.md`) to `~/.claude/CLAUDE.md` telling every new Claude session to log to TensorBoard and
 register what it launches:
 
@@ -68,6 +69,34 @@ stops its TensorBoard, so a queue still between runs then needs registering agai
 A run is **stalled** after no new data for 3 epochs of its recent speed (at least 2 minutes, or an hour before it has
 two epochs to judge by). Crashes look the same. Training never raises "needs you" or sends a push. In the Agentic
 tab, the agent that registered a watch only gets a **training** pill while one of its runs is going.
+
+## Todo
+
+One global list of todos in `~/.local/state/ai-fleet/todos.json`. A todo with a due time is a **reminder**:
+when it comes due, the daemon pops one desktop notification that stays up until you dismiss it, and the Todo tab
+shows a red count of overdue reminders. Nothing goes to your phone. A todo can link a Markdown file, which opens
+rendered inside the panel (with **Open in editor** next to it).
+
+In the tab, type in the fields at the top and press Enter. Click a todo to tick it off, right-click it to edit or
+delete it, and **Clear done** removes every ticked one. Reminders sort first by due time, then the other todos,
+then done ones, struck through. From a terminal:
+
+    fleet todo add "check the eval run" --due "tomorrow 9:00" --md ~/notes/eval.md
+    fleet todo ls
+    fleet todo done 3        # also: undone, rm, edit 3 --due +2h / --no-due / --md … / --no-md, clear-done
+
+Due times read `14:00` (today), `tomorrow 9:00`, `2026-11-12`, `2026-11-12 14:00`, `+30m`, `+2h` and `+3d`; a date
+alone means 09:00. The CLI writes the file itself, so todos work while the daemon is down, but reminders only pop
+up while it runs. `install.sh` adds a rule (`skill/todo-rule.md`) to `~/.claude/CLAUDE.md`, so asking any Claude
+session to "remind me Friday to check the eval run" lands here too.
+
+## How-to
+
+Playbooks of which skill to use at each step, one Markdown file per sub-tab (`h`/`l` switch). They live in
+`~/.config/ai-fleet/howto/`, which is seeded from the repo's `howto/` (software implementation and scientific
+writing) the first time it's missing. After that the folder is yours: edit a playbook, delete one, or drop in
+another `.md`, and its first `# ` heading names its tab. Every `` `/skill` `` in a playbook is checked against what's
+installed: click one to copy it, and one that isn't installed shows "(not installed)".
 
 ## Merged and pushed
 

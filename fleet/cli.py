@@ -220,6 +220,46 @@ def cmd_train(a):
         print(f"Watching {a.dir} on {r['machine']} ({r['watch']}). Its runs show in the panel's AI-train tab.")
 
 
+def fmt_due(ts):
+    """`today 14:00`, `tomorrow 09:00`, `Thu 12 Nov 14:00`."""
+    day = time.strftime("%Y-%m-%d", time.localtime(ts))
+    names = {time.strftime("%Y-%m-%d"): "today", time.strftime("%Y-%m-%d", time.localtime(time.time() + 86400)): "tomorrow"}
+    other = "%a %d %b" if day[:4] == time.strftime("%Y") else "%a %d %b %Y"
+    return f"{names.get(day) or time.strftime(other, time.localtime(ts))} {time.strftime('%H:%M', time.localtime(ts))}"
+
+
+def cmd_todo(a):
+    """Todos never go through the daemon, so they work while it's down."""
+    from . import todos
+    try:
+        if a.todo_cmd == "ls":
+            d = todos.load()
+            if a.json:
+                print(json.dumps(todos.ordered(d["todos"]), indent=1))
+                return
+            now = time.time()
+            for t in todos.ordered(d["todos"]):
+                due = f"  [{'OVERDUE ' if not t['done'] and t['due'] <= now else ''}{fmt_due(t['due'])}]" if t.get("due") else ""
+                md = f"  -> {t['md']}" if t.get("md") else ""
+                print(f"{t['id']:>3} {'[x]' if t['done'] else '[ ]'} {t['text']}{due}{md}")
+            return
+        due = todos.parse_due(a.due) if getattr(a, "due", None) else None
+        md = todos.md_path(a.md) if getattr(a, "md", None) else None
+        if a.todo_cmd == "add":
+            t = todos.add(" ".join(a.text), due, md)
+            print(f"Added todo {t['id']}" + (f", due {fmt_due(t['due'])}" if t["due"] else ""))
+        elif a.todo_cmd == "edit":
+            todos.edit(a.id, text=a.text, due=False if a.no_due else due, md=False if a.no_md else md)
+        elif a.todo_cmd in ("done", "undone"):
+            todos.set_done(a.id, a.todo_cmd == "done")
+        elif a.todo_cmd == "rm":
+            todos.remove(a.id)
+        elif a.todo_cmd == "clear-done":
+            print(f"Cleared {todos.clear_done()} done")
+    except ValueError as e:
+        sys.exit(f"fleet: {e}")
+
+
 def main():
     p = argparse.ArgumentParser(prog="fleet", description="Run and watch Claude agents (ai-fleet).")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -294,6 +334,28 @@ def main():
     for name in ("stop", "remove"):
         train.add_parser(name, help=f"{name} a run by id").add_argument("id")
     train.add_parser("viewing", help="tell the daemon the panel is open (metrics refresh faster then)")
+    s = sub.add_parser("todo", help="your todos and reminders, shown in the panel's Todo tab")
+    todo = s.add_subparsers(dest="todo_cmd", required=True)
+    when = "14:00, tomorrow 9:00, 2026-11-12 14:00, +30m, +2h or +3d; a date alone means 09:00"
+    s = todo.add_parser("add", help="add a todo; with --due it's a reminder")
+    s.add_argument("text", nargs="+")
+    s.add_argument("--due", help=when)
+    s.add_argument("--md", help="a Markdown file to link")
+    s = todo.add_parser("ls", help="list todos: reminders by due time, then the rest, done last")
+    s.add_argument("--json", action="store_true")
+    s = todo.add_parser("edit", help="change a todo")
+    s.add_argument("id")
+    s.add_argument("--text")
+    g = s.add_mutually_exclusive_group()
+    g.add_argument("--due", help=when)
+    g.add_argument("--no-due", action="store_true", help="drop the due time")
+    g = s.add_mutually_exclusive_group()
+    g.add_argument("--md", help="a Markdown file to link")
+    g.add_argument("--no-md", action="store_true", help="drop the linked file")
+    for name, what in (("done", "tick off"), ("undone", "untick"), ("rm", "delete")):
+        todo.add_parser(name, help=f"{what} a todo by id").add_argument("id")
+    todo.add_parser("clear-done", help="delete every done todo")
+    sub.add_parser("howto", help="the How-to tab's playbooks and installed skill names, as JSON")
     s = sub.add_parser("sudo-answer", help="answer a sudo request (password on stdin)")
     s.add_argument("id")
     s.add_argument("--deny", action="store_true")
@@ -331,6 +393,11 @@ def main():
         cmd_cc(a)
     elif a.cmd == "train":
         cmd_train(a)
+    elif a.cmd == "todo":
+        cmd_todo(a)
+    elif a.cmd == "howto":
+        from . import howto
+        print(json.dumps(howto.listing()))
     elif a.cmd == "sudo-answer":
         cmd_sudo_answer(a)
     elif a.cmd == "viewing":

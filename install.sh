@@ -12,11 +12,13 @@ links=(
   "$repo/omarchy-plugin|$HOME/.config/omarchy/plugins/patrick.ai-fleet"
 )
 
-# The rule that tells every Claude session to register its training. Kept between markers so it can be updated or removed.
+# The rules that tell every Claude session to register its training and to put reminders in the Todo tab.
+# Each is kept between markers so it can be updated or removed.
 md="$HOME/.claude/CLAUDE.md"
+rules=(training todo)
 strip_rule() {
   [ -f "$md" ] || return 0
-  sed -i '/^<!-- ai-fleet:training -->$/,/^<!-- \/ai-fleet:training -->$/d' "$md"
+  for r in "${rules[@]}"; do sed -i "/^<!-- ai-fleet:$r -->\$/,/^<!-- \\/ai-fleet:$r -->\$/d" "$md"; done
 }
 
 link() {
@@ -47,8 +49,10 @@ echo "Installing ai-fleet from $repo"
 for l in "${links[@]}"; do link "${l%%|*}" "${l#*|}"; done
 mkdir -p "$(dirname "$md")"
 strip_rule
-{ echo "<!-- ai-fleet:training -->"; cat "$repo/skill/training-rule.md"; echo "<!-- /ai-fleet:training -->"; } >> "$md"
-echo "  rule  $md"
+for r in "${rules[@]}"; do
+  { echo "<!-- ai-fleet:$r -->"; cat "$repo/skill/$r-rule.md"; echo "<!-- /ai-fleet:$r -->"; } >> "$md"
+done
+echo "  rules $md"
 command -v claude >/dev/null || echo "  WARN  claude isn't on PATH; the daemon needs it"
 command -v jq >/dev/null || echo "  WARN  jq isn't installed; the statusline hook needs it"
 systemctl --user daemon-reload

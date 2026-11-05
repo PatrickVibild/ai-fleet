@@ -17,7 +17,7 @@ import subprocess
 import time
 import uuid
 
-from . import account, claude, config, git, memory, paths, phone, skills, testcounts, training
+from . import account, claude, config, git, memory, paths, phone, skills, testcounts, todos, training
 from .runs import (ATTN, CONFLICT, KILLED, LIVE_RUN, MERGED, MERGING, READY, REVIEW, RUNNING, TESTING, WAIT,
                    Run, slug)
 
@@ -181,7 +181,7 @@ class Fleet:
         os.chmod(paths.SOCK, 0o600)
         loops = [self._every(2, self.poll), self._every(2, self.schedule), self._every(1, self.write_state),
                  self._every(5, self.summarize), self._every(5, self.refresh_usage), self._every(5, self.refresh_git),
-                 self._every(2, self.training.poll)]
+                 self._every(2, self.training.poll), self._every(20, self.remind)]
         async with server:
             await asyncio.gather(server.serve_forever(), *loops)
 
@@ -192,6 +192,11 @@ class Fleet:
             except Exception as e:  # keep the daemon alive; surface the error in the log
                 print(f"[{fn.__name__}] {type(e).__name__}: {e}", flush=True)
             await asyncio.sleep(sec)
+
+    async def remind(self):
+        """One desktop notification per reminder that comes due. Nothing goes to the phone."""
+        for t in todos.take_due():
+            notify("Reminder", t["text"])   # urgent, so it stays up until you dismiss it
 
     async def _client(self, reader, writer):
         try:

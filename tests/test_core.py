@@ -17,7 +17,7 @@ os.environ["AI_FLEET_STATE"] = f"{_scratch}/state"
 os.environ["AI_FLEET_CONFIG"] = f"{_scratch}/config"
 os.environ["AI_FLEET_SOCK"] = f"{_scratch}/sock"
 
-from fleet import claude, cli, config, memory, paths, skills, testcounts, training  # noqa: E402
+from fleet import claude, cli, config, howto, memory, paths, skills, testcounts, todos, training  # noqa: E402
 from fleet.daemon import Fleet  # noqa: E402
 from fleet.runs import ATTN, CONFLICT, KILLED, MERGED, RUNNING, WAIT, Run  # noqa: E402
 from fleet.transcripts import SessionView, describe  # noqa: E402
@@ -269,6 +269,131 @@ class Skills(unittest.TestCase):
         self.assertIsNone(skills.missing("/mine"))
         self.assertIsNone(skills.missing("/implement"))
         self.assertIn("isn't an installed", skills.missing("/nope"))
+
+    def test_installed_lists_every_name_a_command_can_use(self):
+        names = skills.installed()
+        self.assertTrue({"mp:implement", "implement", "mine", "code-review"} <= names)
+        self.assertNotIn("nope", names)
+
+
+class Howto(unittest.TestCase):
+    def setUp(self):
+        fake_skills(self)
+        for attr in ("HOWTO", "HOWTO_SEED"):
+            self.addCleanup(setattr, paths, attr, getattr(paths, attr))
+        root = Path(tempfile.mkdtemp())
+        paths.HOWTO, paths.HOWTO_SEED = root / "howto", root / "seed"
+        paths.HOWTO_SEED.mkdir()
+        (paths.HOWTO_SEED / "b.md").write_text("intro\n# Scientific writing\n")
+        (paths.HOWTO_SEED / "a.md").write_text("no heading")
+
+    def test_seeds_the_folder_once_and_names_each_playbook(self):
+        self.assertEqual([d["name"] for d in howto.docs()], ["a", "Scientific writing"])
+        (paths.HOWTO / "a.md").unlink()   # yours to edit: a deleted playbook stays deleted
+        self.assertEqual([d["name"] for d in howto.docs()], ["Scientific writing"])
+
+    def test_listing_carries_the_installed_skills(self):
+        self.assertIn("mp:implement", howto.listing()["skills"])
+
+    def test_shipped_playbooks_only_name_skills_with_a_slash_in_backticks(self):
+        import re
+        for p in (paths.ROOT / "howto").glob("*.md"):
+            self.assertRegex(p.read_text(), r"`/[a-z-]+`", p.name)
+            self.assertIsNone(re.search(r"(?<!`)/(tdd|research|humanizer)\b", p.read_text()), p.name)
+
+
+class DueTimes(unittest.TestCase):
+    NOW = time.mktime((2026, 11, 5, 15, 30, 0, 0, 0, -1))   # Thu 5 Nov 2026, 15:30 local
+
+    def at(self, *ymdhm):
+        return time.mktime((*ymdhm, 0, 0, 0, -1))
+
+    def test_clock_times_and_days(self):
+        due = lambda s: todos.parse_due(s, self.NOW)
+        self.assertEqual(due("14:00"), self.at(2026, 11, 5, 14, 0))
+        self.assertEqual(due("today 18:15"), self.at(2026, 11, 5, 18, 15))
+        self.assertEqual(due("Tomorrow"), self.at(2026, 11, 6, 9, 0))
+        self.assertEqual(due("tomorrow 8:30"), self.at(2026, 11, 6, 8, 30))
+        self.assertEqual(due("2026-11-12"), self.at(2026, 11, 12, 9, 0))
+        self.assertEqual(due("2026-11-12 14:00"), self.at(2026, 11, 12, 14, 0))
+
+    def test_offsets(self):
+        self.assertEqual(todos.parse_due("+30m", self.NOW), self.NOW + 1800)
+        self.assertEqual(todos.parse_due("+2h", self.NOW), self.NOW + 7200)
+        self.assertEqual(todos.parse_due("+3d", self.NOW), self.NOW + 3 * 86400)
+
+    def test_rejects_what_it_cannot_read(self):
+        for bad in ("", "blah", "25:00", "next week", "2026-13-01"):
+            with self.assertRaises(ValueError, msg=bad):
+                todos.parse_due(bad, self.NOW)
+
+
+class Todos(unittest.TestCase):
+    def setUp(self):
+        self.addCleanup(setattr, paths, "TODOS_JSON", paths.TODOS_JSON)
+        paths.TODOS_JSON = Path(tempfile.mkdtemp()) / "todos.json"
+
+    def ids(self):
+        return [t["id"] for t in todos.ordered(todos.load()["todos"])]
+
+    def test_reminders_by_due_time_then_todos_then_done(self):
+        a = todos.add("plain")
+        b = todos.add("later", due=2000)
+        c = todos.add("sooner", due=1000)
+        d = todos.add("finished")
+        todos.set_done(d["id"])
+        self.assertEqual(self.ids(), [c["id"], b["id"], a["id"], d["id"]])
+
+    def test_edit_clears_fields_and_rearms_the_reminder(self):
+        t = todos.add("check run", due=1000, md="/x.md")
+        self.assertEqual([x["id"] for x in todos.take_due(now=1500)], [t["id"]])
+        self.assertEqual(todos.take_due(now=1600), [])   # once only
+        todos.edit(t["id"], due=3000)
+        self.assertEqual(todos.take_due(now=2000), [])
+        self.assertEqual(len(todos.take_due(now=3000)), 1)
+        todos.edit(t["id"], text="check run v2", due=False, md=False)
+        got = todos.load()["todos"][0]
+        self.assertEqual((got["text"], got["due"], got["md"]), ("check run v2", None, None))
+
+    def test_done_reminders_never_notify(self):
+        t = todos.add("x", due=1000)
+        todos.set_done(t["id"])
+        self.assertEqual(todos.take_due(now=2000), [])
+
+    def test_remove_and_clear_done(self):
+        a, b, c = todos.add("a"), todos.add("b"), todos.add("c")
+        todos.remove(a["id"])
+        todos.set_done(b["id"])
+        self.assertEqual(todos.clear_done(), 1)
+        self.assertEqual(self.ids(), [c["id"]])
+        self.assertEqual(todos.add("d")["id"], 4)   # ids never come back
+        with self.assertRaisesRegex(ValueError, "no todo 1"):
+            todos.remove(1)
+
+    def test_cli_round_trip(self):
+        md = Path(tempfile.mkdtemp()) / "plan.md"
+        md.write_text("# plan")
+        out = io.StringIO()
+        with mock.patch("sys.argv", ["fleet", "todo", "add", "--due=+2h", f"--md={md}", "--", "-leading dash"]), \
+                contextlib.redirect_stdout(out):
+            cli.main()
+        self.assertIn("Added todo 1, due", out.getvalue())
+        t = todos.load()["todos"][0]
+        self.assertEqual((t["text"], t["md"]), ("-leading dash", str(md)))
+        with mock.patch("sys.argv", ["fleet", "todo", "edit", "1", "--no-due", "--no-md"]):
+            cli.main()
+        self.assertEqual((todos.load()["todos"][0]["due"], todos.load()["todos"][0]["md"]), (None, None))
+        with mock.patch("sys.argv", ["fleet", "todo", "add", "x", "--md", "/no/such.md"]), \
+                self.assertRaisesRegex(SystemExit, "no such file"):
+            cli.main()
+
+    def test_daemon_pops_each_due_reminder_once(self):
+        todos.add("stretch", due=time.time() - 5)
+        f = Fleet.__new__(Fleet)
+        with mock.patch("fleet.daemon.notify") as notify:
+            asyncio.run(f.remind())
+            asyncio.run(f.remind())
+        notify.assert_called_once_with("Reminder", "stretch")
 
 
 class TicketCommand(unittest.TestCase):

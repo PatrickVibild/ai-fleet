@@ -13,10 +13,13 @@ SOCK = Path(os.environ.get("AI_FLEET_SOCK") or RUNTIME / "ai-fleet.sock")
 
 STATE_JSON = STATE / "state.json"
 TRAINING_JSON = STATE / "training.json"
+TODOS_JSON = STATE / "todos.json"
 RUNS = STATE / "runs"
 STATUSLINE = STATE / "statusline"
 SUMMARY_CWD = STATE / "summarizer"
 LIMITS = CONFIG / "limits.toml"
+HOWTO = CONFIG / "howto"
+HOWTO_SEED = ROOT / "howto"
 MODEL_WINDOWS = STATE / "model-windows.json"
 
 CLAUDE_PROJECTS = HOME / ".claude/projects"

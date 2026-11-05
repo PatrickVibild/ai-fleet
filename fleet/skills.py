@@ -66,3 +66,18 @@ def missing(command, repo=None):
     if any(name in names for _, names in plugins.values()):
         return None
     return f"`/{name}` isn't an installed skill or command"
+
+
+# Skills that ship inside Claude Code itself, so nothing on disk names them
+BUILTIN = {"code-review", "simplify", "security-review", "init", "review", "loop", "schedule"}
+
+
+def installed(repo=None):
+    """Every name a slash command can use right now: built-ins, `plugin:skill` and bare plugin skills, your own."""
+    names = set(BUILTIN)
+    for plugin, (_, ns) in _installed().items():
+        names |= ns | {f"{plugin}:{n}" for n in ns}
+    for base in [paths.HOME / ".claude"] + ([Path(repo) / ".claude"] if repo else []):
+        names |= {p.parent.name for p in (base / "skills").glob("*/SKILL.md")}
+        names |= {p.stem for p in (base / "commands").glob("*.md")}
+    return names

@@ -281,3 +281,35 @@ function syncModel(model, items) {
   }
   while (model.count > items.length) model.remove(model.count - 1)
 }
+
+// Open reminders by due time, then open todos oldest first, then done ones, latest done first (as `fleet todo ls`).
+function orderTodos(todos) {
+  var open = todos.filter(function(t) { return !t.done })
+  return open.filter(function(t) { return t.due }).sort(function(a, b) { return a.due - b.due })
+    .concat(open.filter(function(t) { return !t.due }))
+    .concat(todos.filter(function(t) { return t.done }).sort(function(a, b) { return (b.doneAt || 0) - (a.doneAt || 0) }))
+}
+
+// "today 14:00", "tomorrow 09:00", "Thu 12 Nov 14:00"
+function fmtDue(ts, nowSec) {
+  var d = new Date(ts * 1000), now = new Date(nowSec * 1000)
+  var pad = function(n) { return (n < 10 ? "0" : "") + n }
+  var days = Math.round((new Date(d.getFullYear(), d.getMonth(), d.getDate()) - new Date(now.getFullYear(), now.getMonth(), now.getDate())) / 86400000)
+  var day = days === 0 ? "today" : days === 1 ? "tomorrow" : days === -1 ? "yesterday"
+          : ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d.getDay()] + " " + d.getDate() + " "
+            + ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][d.getMonth()]
+            + (d.getFullYear() !== now.getFullYear() ? " " + d.getFullYear() : "")
+  return day + " " + pad(d.getHours()) + ":" + pad(d.getMinutes())
+}
+
+// A playbook's `/skill` mentions become links that copy them, or get marked when the skill isn't installed.
+function skillLinks(md, installed) {
+  var have = {}
+  ;(installed || []).forEach(function(s) { have[s] = true })
+  return String(md || "").replace(/`\/([A-Za-z0-9_.:-]+)`/g, function(all, name) {
+    return have[name] ? "[/" + name + "](skill:/" + name + ")" : all + " *(not installed)*"
+  })
+}
+
+// "/home/me/notes/plan.md" -> "plan.md"
+function baseName(path) { return String(path || "").split("/").pop() }

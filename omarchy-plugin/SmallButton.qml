@@ -9,6 +9,7 @@ Rectangle {
   property color ink: "black"
   property string font: "monospace"
   property bool primary: false
+  property bool selected: false   // picked but not filled: a full-strength outline and bold text
   property bool enabledState: true
   signal clicked()
   implicitWidth: label.implicitWidth + Style.space(18)
@@ -16,7 +17,7 @@ Rectangle {
   radius: 3
   opacity: enabledState ? 1 : 0.4
   color: primary ? tone : (area.containsMouse ? Qt.rgba(tone.r, tone.g, tone.b, 0.12) : "transparent")
-  border.color: primary ? tone : Qt.rgba(tone.r, tone.g, tone.b, area.containsMouse ? 0.9 : 0.45)
+  border.color: primary ? tone : Qt.rgba(tone.r, tone.g, tone.b, area.containsMouse || selected ? 0.9 : 0.45)
   border.width: 1
   Text {
     id: label
@@ -25,7 +26,7 @@ Rectangle {
     color: b.primary ? b.ink : b.tone
     font.family: b.font
     font.pixelSize: Style.font.bodySmall
-    font.bold: b.primary
+    font.bold: b.primary || b.selected
   }
   MouseArea {
     id: area
