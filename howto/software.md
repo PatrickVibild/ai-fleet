@@ -1,42 +1,38 @@
 # Software implementation
 
-Which skill to reach for at each step. Click a skill to copy it, then paste it into a Claude session.
+From an idea to a merged PR.
 
-## 1. Pin down what you want
+<!-- Numbered sections are the stages of the main flow, left to right. In each, `-` skills are the main path, in order, and `+` skills are optional or alternatives. Unnumbered sections are for any time. -->
 
-- `/grill-me`: you have an idea and want it stress-tested, one round of questions at a time.
-- `/grill-with-docs`: the same, but it writes the ADRs and glossary entries as decisions land.
-- `/domain-modeling`: the terms are fuzzy or used two ways. Sharpens GLOSSARY.md before code bakes the confusion in.
-- `/prototype`: a UI or state model you can't judge on paper. A throwaway build to answer one question.
+## 1. Shape it
+- `/grill-me`: stress-test the idea, one round of questions at a time, until nothing is silently assumed.
++ `/grill-with-docs`: the same interview, writing ADRs and glossary entries as decisions land.
++ `/domain-modeling`: the terms are fuzzy or used two ways. Sharpen GLOSSARY.md before code bakes it in.
++ `/prototype`: a UI or state model you can't judge on paper. A throwaway build answers one question.
 
-## 2. Turn it into work
+## 2. Plan it
+- `/to-spec`: write the decisions already made up as a spec. No new interview.
+- `/to-tickets`: split the spec into tracer-bullet tickets with their blocking edges.
++ `/wayfinder`: too big for one session. Map it as decision tickets and resolve them one by one.
 
-- `/to-spec`: the conversation already holds the decisions. Writes them up as a spec, no new interview.
-- `/to-tickets`: splits a spec into tracer-bullet tickets with their blocking edges.
-- `/wayfinder`: the work is bigger than one session can hold. Maps it as decision tickets and resolves them one by one.
+## 3. Build it
+- `/implement-orchestrator`: run the tickets through the fleet, implementors in parallel. Watch the Agentic tab.
++ `/implement`: one piece of work in this session instead, from a spec or tickets.
++ `/tdd`: new behaviour or a bug fix, test first, red-green-refactor.
++ `/codebase-design`: deciding where a module's seam goes, or making code easier to test.
 
-## 3. Build
+## 4. Ship it
+- `/code-review`: review the branch against the repo's standards and the spec it came from.
+- `/pr`: write the PR body.
++ `/simplify`: a cleanup pass that applies what it finds. It doesn't hunt for bugs.
++ `/security-review`: before shipping anything that handles input, auth or secrets.
 
-- `/implement-orchestrator`: run the tickets through the fleet, several implementors in parallel. Watch it in the Agentic tab.
-- `/implement`: one piece of work in this session, from a spec or tickets.
-- `/tdd`: new behaviour or a bug fix, test first, red-green-refactor.
-- `/codebase-design`: deciding where a module's seam goes, or making code easier to test.
-
-## 4. When something breaks
-
-- `/diagnosing-bugs`: a hard bug or a slowdown. A reproduce, hypothesise, measure loop.
+## When it breaks
+- `/diagnosing-bugs`: a hard bug or a slowdown. Reproduce, hypothesise, measure.
 - `/diagnose-crash`: a program segfaulted or dumped core on this machine.
 
-## 5. Check and ship
-
-- `/code-review`: review a branch against the repo's standards and the spec it came from.
-- `/simplify`: a quality pass that applies the cleanups it finds. It doesn't hunt for bugs.
-- `/security-review`: before shipping anything that handles input, auth or secrets.
-- `/pr`: write the PR body.
-
-## Housekeeping
-
-- `/improve-codebase-architecture`: every so often, to find modules worth deepening.
+## Any time
+- `/handoff`: the context is getting full. Write a handoff for a fresh session.
+- `/improve-codebase-architecture`: every so often, find modules worth deepening.
 - `/writing-for-agents`: editing a skill, CLAUDE.md or AGENTS.md.
-- `/handoff`: the context is getting full. Writes a handoff document for a fresh session.
-- `/retro`: after a long session, to learn what to do differently.
+- `/retro`: after a long session, learn what to do differently.

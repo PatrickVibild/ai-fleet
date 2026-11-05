@@ -92,11 +92,20 @@ session to "remind me Friday to check the eval run" lands here too.
 
 ## How-to
 
-Playbooks of which skill to use at each step, one Markdown file per sub-tab (`h`/`l` switch). They live in
-`~/.config/ai-fleet/howto/`, which is seeded from the repo's `howto/` (software implementation and scientific
-writing) the first time it's missing. After that the folder is yours: edit a playbook, delete one, or drop in
-another `.md`, and its first `# ` heading names its tab. Every `` `/skill` `` in a playbook is checked against what's
-installed: click one to copy it, and one that isn't installed shows "(not installed)".
+Playbooks of which skill to use at each step, one Markdown file per sub-tab (`h`/`l` switch), drawn as a
+flowchart: the stages of the main flow left to right, each stage's main path stacked in order with its optional
+skills under it, and the skills for any time below. Point at a skill to see when to use it, and click it to copy it.
+A skill that isn't installed is faded and marked ✕.
+
+    ## 3. Build it                     <- a numbered section is a stage of the main flow
+    - `/implement-orchestrator`: …     <- `-` is the main path, in order
+    + `/tdd`: …                        <- `+` is optional or an alternative
+    ## Any time                        <- an unnumbered section is a group for any time
+
+The files live in `~/.config/ai-fleet/howto/`, which is seeded from the repo's `howto/` (software implementation and
+scientific writing) the first time it's missing. After that the folder is yours: **Edit playbook** opens one, and any
+other `.md` you drop in becomes a tab named after its first `# ` heading. One with no skill bullets shows as plain
+Markdown.
 
 ## Merged and pushed
 

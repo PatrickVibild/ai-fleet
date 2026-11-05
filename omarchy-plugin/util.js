@@ -311,5 +311,26 @@ function skillLinks(md, installed) {
   })
 }
 
+// A playbook as a flowchart: { title, intro, stages, side }. A numbered `## 1. Title` is a stage of the main flow and
+// an unnumbered `##` a side group for any time. In a section, `- `/skill`: when` is the main path and `+ ` an option.
+// No skills found means it isn't a playbook, and it shows as plain Markdown instead.
+function parsePlaybook(md) {
+  var out = { title: "", intro: "", stages: [], side: [] }, cur = null, intro = []
+  String(md || "").split("\n").forEach(function(line) {
+    var m
+    if (/^\s*<!--/.test(line)) return
+    if ((m = line.match(/^#\s+(.+)/)) && !out.title) out.title = m[1].trim()
+    else if ((m = line.match(/^##\s+(?:(\d+)[.)]\s*)?(.+)/))) {
+      cur = { n: m[1] ? Number(m[1]) : 0, title: m[2].trim(), main: [], extra: [] }
+      ;(m[1] ? out.stages : out.side).push(cur)
+    } else if ((m = line.match(/^\s*([-*+])\s+`\/([^`]+)`\s*[:—-]?\s*(.*)$/)) && cur) {
+      (m[1] === "+" ? cur.extra : cur.main).push({ name: m[2], when: m[3].trim() })
+    } else if (!cur && out.title && line.trim()) intro.push(line.trim())
+  })
+  out.intro = intro.join(" ").replace(/`([^`]*)`/g, "$1")
+  out.skills = out.stages.concat(out.side).reduce(function(n, s) { return n + s.main.length + s.extra.length }, 0)
+  return out
+}
+
 // "/home/me/notes/plan.md" -> "plan.md"
 function baseName(path) { return String(path || "").split("/").pop() }

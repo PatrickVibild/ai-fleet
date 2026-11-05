@@ -295,11 +295,16 @@ class Howto(unittest.TestCase):
     def test_listing_carries_the_installed_skills(self):
         self.assertIn("mp:implement", howto.listing()["skills"])
 
-    def test_shipped_playbooks_only_name_skills_with_a_slash_in_backticks(self):
+    def test_shipped_playbooks_draw_as_flowcharts(self):
+        """Numbered `##` stages, each with a main-path `-` skill; `+` marks an optional one (see U.parsePlaybook)."""
         import re
         for p in (paths.ROOT / "howto").glob("*.md"):
-            self.assertRegex(p.read_text(), r"`/[a-z-]+`", p.name)
-            self.assertIsNone(re.search(r"(?<!`)/(tdd|research|humanizer)\b", p.read_text()), p.name)
+            stages = re.split(r"^## ", p.read_text(), flags=re.M)[1:]
+            numbered = [s for s in stages if re.match(r"\d+\. ", s)]
+            self.assertGreaterEqual(len(numbered), 3, p.name)
+            for s in numbered:
+                self.assertRegex(s, r"(?m)^- `/[a-z-]+`: \S", f"{p.name}: {s.splitlines()[0]}")
+            self.assertRegex(p.read_text(), r"(?m)^\+ `/[a-z-]+`: \S", p.name)
 
 
 class DueTimes(unittest.TestCase):
