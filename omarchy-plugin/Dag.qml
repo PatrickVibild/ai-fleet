@@ -111,6 +111,7 @@ Canvas {
     x: dag.hoverAt.x + 14
     y: dag.hoverAt.y + 10
     text: dag.hovered ? "#" + dag.hovered.id + " " + dag.hovered.title + " · " + dag.hovered.state
+                        + (dag.hovered.implement_command ? "\nruns " + dag.hovered.implement_command : "")
                         + (dag.hovered.short ? "\nclick to open its terminal" : "") : ""
     fontFamily: dag.fontFamily
   }

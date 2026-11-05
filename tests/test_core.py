@@ -1,4 +1,7 @@
+import argparse
 import asyncio
+import contextlib
+import io
 import json
 import os
 import tempfile
@@ -14,7 +17,7 @@ os.environ["AI_FLEET_STATE"] = f"{_scratch}/state"
 os.environ["AI_FLEET_CONFIG"] = f"{_scratch}/config"
 os.environ["AI_FLEET_SOCK"] = f"{_scratch}/sock"
 
-from fleet import claude, config, memory, paths, skills, testcounts, training  # noqa: E402
+from fleet import claude, cli, config, memory, paths, skills, testcounts, training  # noqa: E402
 from fleet.daemon import Fleet  # noqa: E402
 from fleet.runs import ATTN, CONFLICT, KILLED, MERGED, RUNNING, WAIT, Run  # noqa: E402
 from fleet.transcripts import SessionView, describe  # noqa: E402
@@ -351,6 +354,27 @@ class TicketCommand(unittest.TestCase):
         self.assertTrue(prompts[0].startswith("/mine --figure ticket #1"))
         self.assertEqual(prompts[1], "Fix the caption.")
         self.assertTrue(prompts[2].startswith("/mine --figure ticket #1"))
+
+    def test_the_snapshot_carries_a_command_only_where_it_differs_from_the_global_one(self):
+        f = self.fleet
+        f.runs, f.questions, f.sudo, f.agents = {self.run.id: self.run}, {}, {}, {}
+        f.usage = lambda: {"limited": False}
+        self.run.tickets["3"] = {**self.run.ticket("2"), "id": "3", "implement_command": "/mp:implement"}
+        tickets = next(r for r in f.snapshot()["runs"] if r["id"] == self.run.id)["tickets"]
+        self.assertEqual({t["id"]: t["implement_command"] for t in tickets},
+                         {"1": "/mine --figure", "2": "", "3": ""})
+
+    def test_status_shows_a_tickets_own_command_after_its_title(self):
+        st = {"limits": {"orchestrators": 1, "implementors_per_orchestrator": 2}, "summaries": "tool",
+              "attention": [], "sessions": [], "runs": [{"id": "r1", "status": "active", "repo": "/tmp/x", "tickets": [
+                  {"id": "1", "state": "running", "title": "Methods", "blockedBy": [], "implement_command": "/mine --figure"},
+                  {"id": "2", "state": "wait", "title": "Tooling", "blockedBy": ["1"], "implement_command": ""}]}]}
+        out = io.StringIO()
+        with mock.patch.object(cli, "call", lambda req: {"state": st}), contextlib.redirect_stdout(out):
+            cli.cmd_status(argparse.Namespace(json=False))
+        lines = out.getvalue().splitlines()
+        self.assertIn("  #1     running   Methods  /mine --figure", lines)
+        self.assertIn("  #2     wait      Tooling (blocked by #1)", lines)
 
 
 class Schedule(unittest.TestCase):

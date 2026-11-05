@@ -1528,13 +1528,16 @@ class Fleet:
     def snapshot(self):
         runs_out, attention = [], []
         fleet_sids = set()
+        default_cmd = (self.cfg["implement_command"] or "").strip()
         for r in sorted(self.runs.values(), key=lambda r: r.d["created"]):
             if r.d["status"] in ("done", "aborted") and (r.d.get("closed") or time.time() - r.d.get("created", 0) > 6 * 3600):
                 continue
             fleet_sids.add(r.d.get("orchestrator"))
+            # a ticket's own implement_command, or "" when it runs the global one
             tickets = [{"id": t["id"], "title": t["title"], "blockedBy": t["blockedBy"],
                         "state": t["state"], "blockedOn": r.blocked_by_problem(t) if t["state"] == WAIT else [],
-                        "short": (t.get("session") or {}).get("short")}
+                        "short": (t.get("session") or {}).get("short"),
+                        "implement_command": "" if t.get("implement_command") == default_cmd else t.get("implement_command", "")}
                        for t in r.tickets.values()]
             if r.d["status"] == "queued":
                 runs_out.append({"id": r.id, "name": r.d["name"], "repo": r.d["repo"], "status": "queued", "tickets": tickets})

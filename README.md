@@ -96,7 +96,8 @@ State: `~/.local/state/ai-fleet/`. Socket: `$XDG_RUNTIME_DIR/ai-fleet.sock`.
 
 `test` runs in the ticket's worktree when the implementor stops. `quick` runs on the base branch after each
 merge. `full` runs once when every ticket is merged. A ticket's `implement_command` starts its implementor
-instead of the global one in `limits.toml`; leave it out to use the global one.
+instead of the global one in `limits.toml`; leave it out to use the global one. `fleet status` and the
+ticket's tooltip in the panel show it when it differs from the global one.
 
 ## Working on the panel
 
