@@ -91,10 +91,12 @@ State: `~/.local/state/ai-fleet/`. Socket: `$XDG_RUNTIME_DIR/ai-fleet.sock`.
 
     {"repo": "~/code/ledger-api", "base": "main",
      "checks": {"test": "pnpm test", "quick": "pnpm tsc --noEmit && pnpm vitest run --changed", "full": "pnpm test"},
-     "tickets": [{"id": "14", "title": "Refund webhook", "body": "...", "blockedBy": ["12"]}]}
+     "tickets": [{"id": "14", "title": "Refund webhook", "body": "...", "blockedBy": ["12"],
+                  "implement_command": "/write-section"}]}
 
 `test` runs in the ticket's worktree when the implementor stops. `quick` runs on the base branch after each
-merge. `full` runs once when every ticket is merged.
+merge. `full` runs once when every ticket is merged. A ticket's `implement_command` starts its implementor
+instead of the global one in `limits.toml`; leave it out to use the global one.
 
 ## Working on the panel
 

@@ -383,10 +383,21 @@ class Fleet:
             raise ValueError(f"check out {plan['base']} in {repo} first; finished tickets merge into it there")
         if await git.tracked_changes(repo):
             raise ValueError(f"{repo} has uncommitted changes; commit or stash them first")
-        for key in ("implement_command", "merge_command"):
+        own, keys = {}, ["merge_command"]   # own: a ticket's own implement command -> the tickets that bring it
+        for t in plan["tickets"]:
+            cmd = (t.get("implement_command") or "").strip()
+            if cmd:
+                own.setdefault(cmd, []).append(str(t["id"]).lstrip("#"))
+            elif "implement_command" not in keys:   # only tickets without their own need the global one
+                keys.insert(0, "implement_command")
+        for key in keys:
             why = skills.missing(self.cfg[key], repo)
             if why:
                 raise ValueError(f"{key} {why}. Set it in {paths.LIMITS} (\"\" for none), then submit again.")
+        gone = [f"ticket{'s' * (len(ids) > 1)} {', '.join('#' + i for i in ids)} implement_command {why}"
+                for cmd, ids in own.items() if (why := skills.missing(cmd, repo))]
+        if gone:
+            raise ValueError("; ".join(gone) + ". Install it or change the ticket's command, then submit again.")
         orch = plan.pop("orchestrator", None) or await self.session_for_pid(pid)
         run = Run.from_plan(plan, orchestrator=orch)
         self.runs[run.id] = run
@@ -445,7 +456,7 @@ class Fleet:
 
     def implementor_prompt(self, run, t):
         ref = f" ({t['ref']})" if t.get("ref") else ""
-        cmd = self.command(run, "implement_command")
+        cmd = t.get("implement_command") or self.command(run, "implement_command")
         return (f"{cmd + ' ticket' if cmd else 'Implement ticket'} #{t['id']}{ref}: {t['title']}\n\n{t['body']}\n\n"
                 f"You are running unattended under ai-fleet. Ask questions only with the AskUserQuestion tool. "
                 f"Commit your work on the current branch. Never push, and don't merge into `{run.d['base']}`: "
