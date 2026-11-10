@@ -36,7 +36,8 @@ PUBLISHER_PAUSE_S = 3
 
 
 def load_config():
-    cfg = {"library": "~/research", "zotero_user_id": "", "zotero_api_key": "", "proxy_prefix": "", "mailto": ""}
+    cfg = {"library": "~/research", "zotero_user_id": "", "zotero_api_key": "", "zotero_root": "ai-fleet",
+           "proxy_prefix": "", "mailto": ""}
     if CONFIG_PATH.exists():
         cfg.update(tomllib.loads(CONFIG_PATH.read_text()))
     shared = Path.home() / ".config/zotero/env"  # ZOTERO_USER_ID / ZOTERO_API_KEY, also used by other tools
@@ -443,21 +444,39 @@ def zotero_add(key, c, topic):
     print(f"  zotero: {msg}")
 
 
+def zotero_collection(base, h, name, parent):
+    """Key of the collection `name` directly under `parent` (False: top level), created if missing."""
+    cols, start = [], 0
+    while True:
+        page = get_json(f"{base}/collections?limit=100&start={start}", h)
+        cols += page
+        start += len(page)
+        if len(page) < 100:
+            break
+    hit = next((x["key"] for x in cols if x["data"]["name"] == name and x["data"].get("parentCollection") == parent), None)
+    if hit:
+        return hit
+    _, _, body, _ = http(f"{base}/collections", h, json.dumps([{"name": name, "parentCollection": parent}]).encode(), "POST")
+    return json.loads(body)["successful"]["0"]["key"]
+
+
 def zotero_web(key, c, topic, lib):
+    """Files under `<zotero_root>/<topic>`: agents keep their references there for any later paper to reuse. The
+    user's own collections (their reading stack) are theirs; nothing here touches them."""
     base = f"https://api.zotero.org/users/{CFG['zotero_user_id']}"
     h = {"Zotero-API-Key": CFG["zotero_api_key"], "Zotero-API-Version": "3", "Content-Type": "application/json"}
+    root = CFG["zotero_root"]
+    topic_path = f"{root}/{topic}" if root else topic
     try:
-        coll = next((x["key"] for x in get_json(f"{base}/collections?limit=100", h) if x["data"]["name"] == topic), None)
-        if not coll:
-            _, _, body, _ = http(f"{base}/collections", h, json.dumps([{"name": topic}]).encode(), "POST")
-            coll = json.loads(body)["successful"]["0"]["key"]
+        parent = zotero_collection(base, h, root, False) if root else False
+        coll = zotero_collection(base, h, topic, parent)
         zkey = lib.get(key, {}).get("zotero")
         if zkey:  # already in Zotero: add the collection
             item = get_json(f"{base}/items/{zkey}", h)
             cols = set(item["data"].get("collections", [])) | {coll}
             http(f"{base}/items/{zkey}", {**h, "If-Unmodified-Since-Version": str(item["version"])},
                  json.dumps({"collections": sorted(cols)}).encode(), "PATCH")
-            return f"item {zkey} added to collection '{topic}'"
+            return f"item {zkey} added to collection '{topic_path}'"
         item = zotero_item(key, c)
         item["collections"] = [coll]
         _, _, body, _ = http(f"{base}/items", h, json.dumps([item]).encode(), "POST")
@@ -467,7 +486,7 @@ def zotero_web(key, c, topic, lib):
         zkey = res["successful"]["0"]["key"]
         lib[key]["zotero"] = zkey
         save_library(lib)
-        return f"item {zkey} in collection '{topic}' (web API; appears in the desktop app after it syncs)"
+        return f"item {zkey} in collection '{topic_path}' (web API; appears in the desktop app after it syncs)"
     except urllib.error.HTTPError as e:
         return f"web API error {e.code}: {e.read()[:200]!r}"
 
@@ -495,6 +514,7 @@ def cmd_config(_):
     print(f"config file: {CONFIG_PATH} ({'exists' if CONFIG_PATH.exists() else 'missing, using defaults'})")
     print(f"library:     {LIB}")
     print(f"zotero:      {'web API, user ' + CFG['zotero_user_id'] if CFG['zotero_api_key'] else 'desktop connector (app must be open)'}")
+    print(f"collections: {CFG['zotero_root'] + '/<topic>' if CFG['zotero_root'] else '<topic> at the top level'}")
     print(f"proxy:       {CFG['proxy_prefix'] or '(none: publisher access only on the university network)'}")
 
 

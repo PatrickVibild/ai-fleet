@@ -19,7 +19,7 @@ The **library** holds every paper read so far, with notes and citation keys. Wri
   pdf/, text/              full texts; text/<key>.txt is what you read
 ```
 
-A topic is a kebab-case subject (`jerlov-water-types`, `underwater-image-formation`), never a paper section: the methodology, the discussion and a reviewer reply all draw on the same topics. Each topic is also a Zotero collection of the same name.
+A topic is a kebab-case subject (`jerlov-water-types`, `underwater-image-formation`), never a paper section: the methodology, the discussion and a reviewer reply all draw on the same topics. Each topic is also a Zotero collection of the same name, under `ai-fleet/`.
 
 ## Steps
 
@@ -55,4 +55,6 @@ Request papers one at a time, only the ones you will read; university licences f
 
 ## Zotero
 
-With web API keys (`zotero_user_id` and `zotero_api_key` in `~/.config/research-academic/config.toml`, else `ZOTERO_USER_ID` and `ZOTERO_API_KEY` in `~/.config/zotero/env`), `lit.py` adds items through the Zotero web API, creating each topic's collection as needed; they reach the desktop app on its next sync. Without them it uses the desktop app's connector, which needs Zotero open and can file into an existing collection only. Each item's Extra field pins `Citation Key: <key>`, so Better BibTeX exports the same keys as `refs.bib`.
+The Zotero library has two top-level collections. `ai-fleet/` is where agents keep their references: `lit.py add` files each paper under `ai-fleet/<topic>`, and any paper there may be cited right away, with no approval step. It's shared across papers, so later work reuses it. `patrick/` is the user's own reading stack, where they mark what they've read themselves. You may read and cite from it, but never add, move, edit or delete anything there. `zotero_root` in the config names the agents' collection (default `ai-fleet`).
+
+With web API keys (`zotero_user_id` and `zotero_api_key` in `~/.config/research-academic/config.toml`, else `ZOTERO_USER_ID` and `ZOTERO_API_KEY` in `~/.config/zotero/env`), `lit.py` adds items through the Zotero web API, creating `ai-fleet/` and each topic's collection under it as needed; they reach the desktop app on its next sync. Without them it uses the desktop app's connector, which needs Zotero open and can file into an existing collection only. Each item's Extra field pins `Citation Key: <key>`, so Better BibTeX exports the same keys as `refs.bib`.

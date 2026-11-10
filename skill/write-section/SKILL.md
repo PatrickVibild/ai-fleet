@@ -35,7 +35,7 @@ The section's claims are its tests.
      isn't in `results/`: stop and ask.
    - Cite only keys in `references.bib`. If a claim needs a source you don't have, write
      `\citep{TODO: what the source must show}` and ask. The gate fails on it until the paper is
-     in Zotero `sota/` and `make bib` has run. Never invent a citekey, a paper, or a result.
+     in Zotero (under `ai-fleet/` via `/find-papers`, or the user's `patrick/`) and `make bib` has run. Never invent a citekey, a paper, or a result.
    - Use only terms and symbols from `GLOSSARY.md`. If you need a new one, add it there.
    - Describe what figures and tables show, not what they're expected to show.
 3. **Refactor.** Tighten. Cut sentences that don't serve a claim or the arc, fix the transitions

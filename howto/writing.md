@@ -6,7 +6,7 @@ From a question to a revised paper.
 
 ## 1. Learn the field
 - `/research-academic`: find and read the prior work in your literature library (mirrored to Zotero), and cite it for each claim.
-+ `/find-papers`: find new papers on a topic and file them in the paper's Zotero read collection for you to triage.
++ `/find-papers`: find new papers on a topic and file them in Zotero under `ai-fleet/<topic>`, citable right away. Your own reading stays in `patrick/`.
 + `/teach`: you need to understand a method yourself before writing about it.
 
 ## 2. Sharpen the claim
