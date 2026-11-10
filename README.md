@@ -119,6 +119,13 @@ the base branch once the work is merged into it, otherwise the session's own bra
 reason shows under the row: no remote yet, the remote repo doesn't exist, no write access, an unknown SSH host
 key, a protected branch, the remote is ahead (pull first), or the network.
 
+A done run whose plan named its `spec` and ticket `ref`s gets a third button, **✕ delete spec + N tickets**
+(or `fleet tidy <run>`), which asks first. Local files are deleted. If git tracks them, they're removed in one
+commit on the base branch, and the push tick then offers that commit. GitHub and GitLab issues are closed as
+completed (with `gh` or `glab`) and not deleted. A local spec is kept while other tickets in its `issues/` folder
+are still open. Whatever failed shows under the row, and clicking the button again retries it. Files already
+gone and issues already closed count as done.
+
 ## Install
 
     ./install.sh            # links everything into place, every skill in skill/ included, and starts the daemon
@@ -130,9 +137,10 @@ State: `~/.local/state/ai-fleet/`. Socket: `$XDG_RUNTIME_DIR/ai-fleet.sock`.
 
 ## A plan
 
-    {"repo": "~/code/ledger-api", "base": "main",
+    {"repo": "~/code/ledger-api", "base": "main", "spec": ".scratch/refunds/spec.md",
      "checks": {"test": "pnpm test", "quick": "pnpm tsc --noEmit && pnpm vitest run --changed", "full": "pnpm test"},
-     "tickets": [{"id": "14", "title": "Refund webhook", "body": "...", "blockedBy": ["12"],
+     "tickets": [{"id": "14", "title": "Refund webhook", "body": "...", "ref": ".scratch/refunds/issues/14-webhook.md",
+                  "blockedBy": ["12"],
                   "implement_command": "/write-section"}]}
 
 `test` runs in the ticket's worktree when the implementor stops. `quick` runs on the base branch after each

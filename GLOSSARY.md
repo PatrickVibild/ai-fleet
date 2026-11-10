@@ -12,6 +12,10 @@ _Avoid_: ticket command, skill (when meaning the command a ticket starts with)
 What sort of work a ticket is (section, figure, tooling…), marked by a `kind:` label or a `**Kind:**` line. The orchestrator maps it to an implement command; the fleet itself never sees it.
 _Avoid_: type, category
 
+**Tidy**:
+Retiring a done run's spec and tickets from their tracker: local files deleted (committed when tracked), issues closed. Only from the panel's button or `fleet tidy`, never automatically.
+_Avoid_: clean up (that's removing a run's worktrees and sessions), archive
+
 **Reminder**:
 A todo with a due time. When it comes due the daemon pops one desktop notification; it never goes to the phone.
 _Avoid_: alarm, alert (alerts are the "needs you" list)

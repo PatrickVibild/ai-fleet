@@ -1,6 +1,6 @@
 # Reading tickets for a plan
 
-Every ticket in the plan needs: an `id`, a `title`, the full `body` (what to build and its acceptance criteria), a `ref` the implementor can open, and `blockedBy` (ids of tickets in this same plan). Some also get an `implement_command` (see [Ticket commands](#ticket-commands)).
+Every ticket in the plan needs: an `id`, a `title`, the full `body` (what to build and its acceptance criteria), a `ref` the implementor can open, and `blockedBy` (ids of tickets in this same plan). Some also get an `implement_command` (see [Ticket commands](#ticket-commands)). The plan's `spec` is the spec the tickets came from, in the same form as a `ref`.
 
 ## Local markdown (`.scratch/`)
 
@@ -13,6 +13,7 @@ Tickets are `.scratch/<feature>/issues/<NN>-<slug>.md`; the spec is `.scratch/<f
 - `blockedBy`: the `**Blocked by:**` line. It names tickets by number or title; map each to its id. "None" means no blockers.
 - `kind`: the `**Kind:**` line, if any.
 - Skip tickets whose `Status:` says done, resolved, or closed.
+- `spec`: `.scratch/<feature>/spec.md` relative to the repo root, if it exists.
 
 ## GitHub
 
@@ -22,10 +23,11 @@ Tickets are `.scratch/<feature>/issues/<NN>-<slug>.md`; the spec is `.scratch/<f
 - `blockedBy`: native dependencies first:
   `gh api repos/{owner}/{repo}/issues/<n>/dependencies/blocked_by --jq '.[] | select(.state=="open") | .number'`.
   If that endpoint isn't available, read the `## Blocked by` section of the body. Keep only blockers that are in this plan; a blocker outside the plan that is still open means the ticket can't run yet, so leave it out and tell the user.
+- `spec`: the URL of the parent issue the tickets are sub-issues of, or the spec issue the user named.
 
 ## GitLab
 
-Same shape with `glab issue list` / `glab issue view`; blockers come from the issue's "blocked by" links (`glab api projects/:id/issues/<n>/links`) or the body's `Blocked by` section. `kind` as for GitHub: a `kind:<x>` label, else the body's `**Kind:**` line.
+Same shape with `glab issue list` / `glab issue view`; blockers come from the issue's "blocked by" links (`glab api projects/:id/issues/<n>/links`) or the body's `Blocked by` section. `kind` as for GitHub: a `kind:<x>` label, else the body's `**Kind:**` line. `ref` is the issue's web URL and `spec` the spec issue's, as for GitHub.
 
 ## Anything else
 

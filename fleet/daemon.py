@@ -17,7 +17,7 @@ import subprocess
 import time
 import uuid
 
-from . import account, claude, config, git, memory, paths, phone, skills, testcounts, todos, training
+from . import account, claude, config, git, memory, paths, phone, skills, testcounts, todos, tracker, training
 from .runs import (ATTN, CONFLICT, KILLED, LIVE_RUN, MERGED, MERGING, READY, REVIEW, RUNNING, TESTING, WAIT,
                    Run, slug)
 
@@ -952,6 +952,8 @@ class Fleet:
         if a == "push":
             return await self.push(req["path"])
         run = self._run(req["run"])
+        if a == "tidy":
+            return await self.tidy(run)
         if a == "pause":
             run.d["status"] = "paused"
         elif a == "resume":
@@ -1215,6 +1217,34 @@ class Fleet:
         if not ok:
             raise ValueError(msg)
         return {"msg": msg}
+
+    async def tidy(self, run):
+        """Delete a done run's local spec and ticket files (committed on the base branch when tracked), or close
+        their issues. The outcome stays on the run, so the panel can show what failed and offer a retry."""
+        if run.d["status"] != "done":
+            raise ValueError(f"{run.d['name']} is {run.d['status']}; its spec and tickets are tidied once every ticket is merged")
+        if not tracker.items(run):
+            raise ValueError(f"{run.d['name']}'s plan names no spec or ticket refs to tidy")
+        run.d["tidy"] = {"state": "running", "at": time.time()}
+        run.save()
+        try:
+            async with self.lock(run.d["repo"]):
+                r = await tracker.tidy(run)
+        except Exception as e:   # never leave the row saying "tidying…"
+            r = {"done": [], "skipped": [], "failed": [("", f"tidy crashed: {type(e).__name__}: {e}")], "commit": None}
+        msg = "; ".join(f"{ref} {why}".strip() for ref, why in r["failed"] + r["skipped"])
+        run.d["tidy"] = {"state": "failed" if r["failed"] else "ok", "msg": msg, "done": r["done"],
+                         "commit": r["commit"], "at": time.time()}
+        run.event("tidy_failed" if r["failed"] else "tidied", done=r["done"], failed=r["failed"],
+                  skipped=r["skipped"], commit=r["commit"])
+        run.save()
+        if r["commit"]:   # the push tick should offer the new commit right away
+            self.gitinfo[run.d["repo"]] = await git.status(run.d["repo"], run.d["base"])
+        if r["failed"]:
+            raise ValueError(msg)
+        return {"msg": f"Tidied {len(r['done'])} of {run.d['name']}'s spec and tickets"
+                       + (f" and committed it as {r['commit']}; push to share it" if r["commit"] else "")
+                       + (f". {msg}" if msg else ".")}
 
     def git_view(self, path):
         info = self.gitinfo.get(path)
@@ -1586,7 +1616,9 @@ class Fleet:
                              "finalCmd": (r.d["checks"] or {}).get("full") or (r.d["checks"] or {}).get("test") or "",
                              "slots": {"used": r.slots_used(), "max": self.cfg["implementors_per_orchestrator"]},
                              "tickets": tickets, "tree": tree,
-                             "git": self.git_view(r.d["repo"]) if r.d["status"] == "done" else None})
+                             "git": self.git_view(r.d["repo"]) if r.d["status"] == "done" else None,
+                             "tidy": {**tracker.summary(r), **(r.d.get("tidy") or {})}
+                                     if r.d["status"] == "done" and tracker.items(r) else None})
             for t in r.tickets.values():
                 at = t.get("attn") or {}
                 if t["state"] == ATTN and at.get("kind") != "question":

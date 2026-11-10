@@ -222,6 +222,12 @@ Panel {
     toast("Pushing " + target + (remote ? " to " + remote : "") + "…", false)
     fleet.run(["push", path], "Pushed " + target + (remote ? " to " + remote : ""), undefined, "Push failed")
   }
+  // Same for tidying a done run's spec and tickets: the reason for a failure stays under its ticks.
+  function tidy(runId, tidy) {
+    var done = tidy.verb === "delete" ? "Deleted " : tidy.verb === "close" ? "Closed " : "Tidied "
+    toast((tidy.verb === "delete" ? "Deleting " : tidy.verb === "close" ? "Closing " : "Tidying ") + tidy.what + "…", false)
+    fleet.run(["tidy", runId], done + tidy.what, undefined, "Tidy failed")
+  }
 
   // ---- toast
   property string toastText: ""

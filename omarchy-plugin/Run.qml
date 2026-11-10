@@ -149,6 +149,8 @@ ColumnLayout {
     Layout.leftMargin: Style.space(14)
     Layout.rightMargin: Style.space(14)
     g: U.gitFields(sec.run ? sec.run.git : null)
+    tidy: sec.run ? sec.run.tidy || null : null
+    runId: sec.runId
     view: sec.view
     visible: !!sec.run && sec.run.status === "done" && !!sec.run.git
   }

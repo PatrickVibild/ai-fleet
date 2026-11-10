@@ -21,14 +21,14 @@ The `fleet` CLI is your only interface to the daemon (`fleet --help`).
 
    ```
    fleet submit - <<'EOF'
-   {"repo": "<abs path>", "base": "<branch>", "name": "<feature>",
+   {"repo": "<abs path>", "base": "<branch>", "name": "<feature>", "spec": "<spec path or issue url>",
     "checks": {"test": "...", "quick": "...", "full": "..."},
     "tickets": [{"id": "3", "title": "...", "body": "<full ticket text>", "ref": "<path or issue url>", "blockedBy": ["1"],
                  "implement_command": "/write-section"}]}
    EOF
    ```
 
-   Leave out `implement_command` on tickets that have none; they use the global one.
+   Leave out `implement_command` on tickets that have none; they use the global one. Set `spec` to the tickets' spec (see [TICKETS.md](TICKETS.md)), or leave it out if they have none. With `spec` and each ticket's `ref`, the panel can delete or close them once the run is done.
 
    The reply names the run id. If it refuses (dirty checkout, wrong branch, no commits), relay its message and stop.
 
@@ -66,7 +66,7 @@ Read `last_message`. A question or a blocker the sources settle: `fix` with the 
 - `command_missing`: the configured `implement_command` or `merge_command`, or a ticket's own `implement_command` (then `ticket` is set), is no longer installed (a plugin update dropped it). Those sessions now get plain instructions instead. Tell the user in one line, quoting `detail`.
 - `attention`: relay it in one line (the panel has the buttons). Kind `stalled` (or a `merge_failed` whose message says the merger never started or hasn't replied) means the session sits idle: say so, and that they can open it or retry.
 - `held`, `conflict`, `green_again`, `verdict_timeout`: one line each, or none if nothing changed for the user.
-- `run_done`: report tickets merged and any kept worktrees, and stop watching. You're done. Don't push yourself: the Fleet panel shows whether the base branch is pushed and pushes it on a click (or `fleet push <repo>`), and says why if the push fails.
+- `run_done`: report tickets merged and any kept worktrees, and stop watching. You're done. Don't push yourself: the Fleet panel shows whether the base branch is pushed and pushes it on a click (or `fleet push <repo>`), and says why if the push fails. Don't tidy the spec and tickets yourself either: the panel has a button for that (or `fleet tidy <run>`), and whether to keep them is the user's call.
 - `aborted`: confirm, and stop watching.
 
 If the user asks about the run, `fleet status` is the truth.

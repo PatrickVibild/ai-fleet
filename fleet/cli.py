@@ -53,6 +53,11 @@ def cmd_status(a):
         elif g:
             why = (g.get("push") or {}).get("msg") or (f"{g['unpushed']} commits only here" if g["remote"] else "no remote")
             print(f"  not pushed: {why}  (fleet push {r['repo']})")
+        td = r.get("tidy")
+        if td and td.get("state") == "ok":
+            print("  spec and tickets tidied" +(f" ({td['msg']})" if td.get("msg") else ""))
+        elif td:
+            print(f"  {td['verb']} {td['what']}: " + (td.get("msg") or "not yet") + f"  (fleet tidy {r['id']})")
         if r.get("finalCheck") in ("running", "cleanup") and r["status"] == "active":
             mins = int((time.time() - (r.get("finalCheckAt") or time.time())) // 60)
             print(f"  every ticket merged; final check running for {mins} min: {r.get('finalCmd') or '(none)'}"
@@ -135,6 +140,10 @@ def cmd_continue(a):
 def cmd_push(a):
     r = call({"op": "ctl", "action": "push", "path": os.path.realpath(os.path.expanduser(a.path))}, timeout=300)
     print(r["msg"])
+
+
+def cmd_tidy(a):
+    print(call({"op": "ctl", "action": "tidy", "run": a.run}, timeout=300)["msg"])
 
 
 def cmd_limits(a):
@@ -304,6 +313,8 @@ def main():
         sub.add_parser(name, help=f"{name} a session by short id").add_argument("session")
     s = sub.add_parser("push", help="push a finished run's repo, or a session's work, to its remote")
     s.add_argument("path", help="the run's repo or the session's working directory")
+    sub.add_parser("tidy", help="delete a done run's local spec and ticket files, or close their issues"
+                   ).add_argument("run")
     s = sub.add_parser("continue", help="resume every agent the usage limit stopped")
     s.add_argument("--note", help="the message sent to each agent (default: carry on where you left off)")
     s = sub.add_parser("limits", help="show or change the limits")
@@ -385,6 +396,8 @@ def main():
         cmd_continue(a)
     elif a.cmd == "push":
         cmd_push(a)
+    elif a.cmd == "tidy":
+        cmd_tidy(a)
     elif a.cmd == "limits":
         cmd_limits(a)
     elif a.cmd == "phone":

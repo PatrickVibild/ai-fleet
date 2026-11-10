@@ -4,18 +4,28 @@ import qs.Ui
 
 // Two ticks for finished work: merged into the base branch, and pushed to the remote. The push tick is a button
 // while the work isn't on the remote; a failed push says why underneath. `g` holds the fields of util.gitFields.
+// A done run whose plan named its spec and tickets also gets a third, which deletes or closes them after a confirm.
 Flow {
   id: t
   required property var g
   required property var view
+  property var tidy: null      // the run's `tidy` from state.json: {verb, what, refs, state?, msg?}
+  property string runId: ""
   readonly property var fleet: view.fleet
   property bool justClicked: false
+  property bool tidyClicked: false
   readonly property bool pushing: g.gitPushState === "running" || justClicked
   readonly property bool failed: !pushing && g.gitPushState === "failed"
+  readonly property bool tidying: !!tidy && (tidy.state === "running" || tidyClicked)
+  readonly property bool tidied: !!tidy && !tidying && tidy.state === "ok"
+  readonly property bool tidyFailed: !!tidy && !tidying && tidy.state === "failed"
+  readonly property bool confirmingTidy: view.confirmKill === "tidy:" + runId
+  readonly property string tidyVerb: tidy ? tidy.verb : ""
   spacing: Style.space(6)
   visible: g.gitPath !== ""
 
   Timer { id: settle; interval: 2500; onTriggered: t.justClicked = false }
+  Timer { id: tidySettle; interval: 2500; onTriggered: t.tidyClicked = false }
 
   component Tick: Rectangle {
     id: tick
@@ -62,6 +72,41 @@ Flow {
     tip: t.g.gitDirty + " tracked file(s) have changes that aren't committed, so they're neither merged nor pushed."
   }
   Tick {
+    visible: !!t.tidy && !t.confirmingTidy
+    label: !t.tidy ? ""
+         : t.tidying ? "◌ " + (t.tidyVerb === "delete" ? "deleting " : t.tidyVerb === "close" ? "closing " : "tidying ") + t.tidy.what + "…"
+         : t.tidied ? "✓ " + t.tidy.what + (t.tidyVerb === "delete" ? " deleted" : t.tidyVerb === "close" ? " closed" : " tidied")
+         : t.tidyFailed ? "✗ " + t.tidyVerb + " failed · retry"
+         : "✕ " + t.tidyVerb + " " + t.tidy.what
+    tone: t.tidying ? t.fleet.cyan : t.tidied ? t.fleet.green : t.tidyFailed ? t.fleet.red : t.view.fg
+    clickable: !t.tidying && !t.tidied
+    tip: !t.tidy ? "" : (t.tidied ? "Done:\n" : "Every ticket is merged, so these have done their job:\n")
+         + t.tidy.refs.join("\n")
+         + (t.tidied ? "" : "\n\nLocal files are deleted; tracked ones in one commit on " + t.g.gitBase
+            + ", which you then push. Issues are closed as completed, with a comment naming this run."
+            + " A local spec stays while other tickets beside it are still open.")
+    onClicked: t.view.confirmKill = "tidy:" + t.runId
+  }
+  Tick {
+    visible: t.confirmingTidy
+    label: t.tidyVerb === "close" ? "Close them? yes" : "Delete them? yes"
+    tone: t.fleet.red
+    clickable: true
+    onClicked: {
+      t.view.confirmKill = ""
+      t.tidyClicked = true
+      tidySettle.restart()
+      t.view.tidy(t.runId, t.tidy)
+    }
+  }
+  Tick {
+    visible: t.confirmingTidy
+    label: "keep"
+    tone: t.view.dim
+    clickable: true
+    onClicked: t.view.confirmKill = ""
+  }
+  Tick {
     label: t.pushing ? "◌ pushing " + (t.g.gitTarget || "") + "…"
          : t.g.gitPushed ? "✓ pushed · " + t.g.gitRemote
          : t.failed ? "✗ push failed · retry"
@@ -84,6 +129,15 @@ Flow {
     width: t.width
     text: t.g.gitPushMsg
     color: t.fleet.red
+    font.family: t.view.fontFamily
+    font.pixelSize: Style.font.bodySmall
+    wrapMode: Text.Wrap
+  }
+  Text {
+    visible: !!t.tidy && !t.tidying && !!t.tidy.msg
+    width: t.width
+    text: t.tidy && t.tidy.msg ? t.tidy.msg : ""
+    color: t.tidyFailed ? t.fleet.red : t.view.dim
     font.family: t.view.fontFamily
     font.pixelSize: Style.font.bodySmall
     wrapMode: Text.Wrap

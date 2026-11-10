@@ -1130,6 +1130,97 @@ class RepoHold(GitRepo):
         self.assertIsNone(run.d["held"])
 
 
+class Tidy(GitRepo):
+    """A done run's spec and tickets go once their work is merged: local files deleted, issues closed."""
+
+    def setUp(self):
+        super().setUp()
+        from fleet import tracker
+        self.tracker = tracker
+        self.feat = self.repo / ".scratch/refunds"
+        (self.feat / "issues").mkdir(parents=True)
+        (self.feat / "spec.md").write_text("# Refunds\n")
+        for n in ("01-money", "02-webhook"):
+            (self.feat / "issues" / f"{n}.md").write_text(f"# {n}\n\n**Status:** ready-for-agent\n")
+
+    def run_of(self, spec=".scratch/refunds/spec.md", refs=(".scratch/refunds/issues/01-money.md",
+                                                            ".scratch/refunds/issues/02-webhook.md")):
+        run = Run.from_plan({"repo": str(self.repo), "base": "main", "name": "refunds", "spec": spec,
+                             "tickets": [{"id": str(i), "title": "T", "ref": r} for i, r in enumerate(refs, 1)]})
+        run.d["status"] = "done"
+        return run
+
+    def tidy(self, run):
+        return self.asyncio.run(self.tracker.tidy(run))
+
+    def test_tracked_files_go_in_one_commit_and_their_folders_with_them(self):
+        self.commit("tickets")
+        r = self.tidy(self.run_of())
+        self.assertEqual(r["failed"], [])
+        self.assertEqual(len(r["done"]), 3)
+        self.assertFalse(self.feat.exists())
+        self.assertEqual(self.sh("git", "log", "-1", "--format=%s", cwd=self.repo),
+                         "Remove the spec and tickets of refunds: all merged")
+        self.assertEqual(self.sh("git", "status", "--porcelain", cwd=self.repo), "")
+        again = self.tidy(self.run_of())   # a retry finds nothing left and commits nothing
+        self.assertEqual((again["failed"], again["commit"], len(again["done"])), ([], None, 3))
+
+    def test_untracked_files_are_just_deleted(self):
+        r = self.tidy(self.run_of())
+        self.assertEqual((r["failed"], r["commit"]), ([], None))
+        self.assertFalse(self.feat.exists())
+
+    def test_spec_stays_while_other_tickets_beside_it_are_open(self):
+        (self.feat / "issues/03-refunds.md").write_text("# 03\n\n**Status:** ready-for-agent\n")
+        (self.feat / "issues/04-old.md").write_text("# 04\n\n**Status:** done\n")
+        r = self.tidy(self.run_of())
+        self.assertTrue((self.feat / "spec.md").exists())
+        self.assertFalse((self.feat / "issues/01-money.md").exists())
+        self.assertEqual(len(r["skipped"]), 1)
+        self.assertIn("03-refunds.md", r["skipped"][0][1])
+
+    def test_refuses_paths_outside_the_repo(self):
+        outside = self.root / "keep.md"
+        outside.write_text("x")
+        r = self.tidy(self.run_of(spec="../keep.md", refs=()))
+        self.assertTrue(outside.exists())
+        self.assertIn("inside the repo", r["failed"][0][1])
+
+    def test_issues_are_closed_not_deleted(self):
+        url = "https://github.com/me/paper/issues/7"
+        run = self.run_of(spec="https://github.com/me/paper/issues/3", refs=(url,))
+        self.assertEqual(self.tracker.summary(run)["verb"], "close")
+        self.assertEqual(self.tracker.summary(run)["what"], "spec + 1 issue")
+        calls = []
+
+        async def fake(*args, timeout=60):
+            calls.append(args)
+            return 0, ""
+        with mock.patch.object(self.tracker, "_run", fake):
+            r = self.tidy(run)
+        self.assertEqual(r["failed"], [])
+        self.assertEqual([c[:4] for c in calls], [("gh", "issue", "close", url),
+                                                  ("gh", "issue", "close", "https://github.com/me/paper/issues/3")])
+
+    def test_daemon_keeps_the_outcome_on_the_run(self):
+        f = Fleet.__new__(Fleet)
+        f.locks, f.gitinfo = {}, {}
+        run = self.run_of()
+        run.d["status"] = "active"
+        with self.assertRaisesRegex(ValueError, "once every ticket is merged"):
+            self.asyncio.run(f.tidy(run))
+        run.d["status"] = "done"
+        (self.feat / "spec.md").chmod(0o444)
+        self.feat.chmod(0o555)   # can't delete inside it
+        self.addCleanup(self.feat.chmod, 0o755)
+        with self.assertRaises(ValueError):
+            self.asyncio.run(f.tidy(run))
+        self.assertEqual(run.d["tidy"]["state"], "failed")
+        self.feat.chmod(0o755)
+        self.assertIn("Tidied 3", self.asyncio.run(f.tidy(run))["msg"])
+        self.assertEqual(run.d["tidy"]["state"], "ok")
+
+
 class Popups(unittest.TestCase):
     """A desktop popup for a "needs you" item closes once the item clears, e.g. a merge the orchestrator retried."""
 

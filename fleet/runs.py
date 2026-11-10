@@ -28,7 +28,8 @@ class Run:
     # -- construction ---------------------------------------------------------
     @classmethod
     def from_plan(cls, plan: dict, orchestrator=None):
-        """plan = {repo, base?, name?, checks?: {test, quick, full}, tickets: [{id, title, body?, blockedBy?: [], implement_command?}]}"""
+        """plan = {repo, base?, name?, spec?, checks?: {test, quick, full},
+        tickets: [{id, title, body?, ref?, blockedBy?: [], implement_command?}]}"""
         repo = str(plan["repo"]).rstrip("/")
         name = plan.get("name") or repo.rsplit("/", 1)[-1]
         tickets = {}
@@ -44,7 +45,7 @@ class Run:
         cls._check_acyclic(tickets)
         rid = f"{slug(name)}-{uuid.uuid4().hex[:6]}"
         return cls({"id": rid, "name": name, "repo": repo, "base": plan.get("base") or "",
-                    "checks": plan.get("checks") or {}, "status": "queued", "held": None,
+                    "spec": str(plan.get("spec") or "").strip(), "checks": plan.get("checks") or {}, "status": "queued", "held": None,
                     "created": time.time(), "orchestrator": orchestrator, "tickets": tickets,
                     "helpers": [], "fixerRound": 0, "finalCheck": None})
 
