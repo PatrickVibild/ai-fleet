@@ -18,8 +18,10 @@ From a question to a revised paper.
 - `/to-tickets`: one ticket per section, figure or tool, each marked with its kind.
 
 ## 4. Draft
-- `/implement-orchestrator`: draft sections and build figures in parallel through the fleet.
-+ `/implement`: draft one section in this session from its ticket.
+- `/implement-orchestrator`: draft sections and build figures in parallel through the fleet. Each ticket starts with the command for its kind in the repo's `docs/agents/ticket-commands.md`.
++ `/write-section`: draft one section in this session from its ticket. The paper repo's own skill.
++ `/make-figure`: build one figure in this session from its ticket. The paper repo's own skill.
++ `/make-table`: build one table in this session from its ticket. The paper repo's own skill.
 + `/prototype`: try a figure or table layout before committing to it.
 
 ## 5. Revise
