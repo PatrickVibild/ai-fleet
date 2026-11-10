@@ -6,6 +6,7 @@ From a question to a revised paper.
 
 ## 1. Learn the field
 - `/research-academic`: find and read the prior work in your literature library (mirrored to Zotero), and cite it for each claim.
++ `/find-papers`: find new papers on a topic and file them in the paper's Zotero read collection for you to triage.
 + `/teach`: you need to understand a method yourself before writing about it.
 
 ## 2. Sharpen the claim
@@ -19,14 +20,14 @@ From a question to a revised paper.
 
 ## 4. Draft
 - `/implement-orchestrator`: draft sections and build figures in parallel through the fleet. Each ticket starts with the command for its kind in the repo's `docs/agents/ticket-commands.md`.
-+ `/write-section`: draft one section in this session from its ticket. The paper repo's own skill.
-+ `/make-figure`: build one figure in this session from its ticket. The paper repo's own skill.
-+ `/make-table`: build one table in this session from its ticket. The paper repo's own skill.
++ `/write-section`: draft one section in this session from its ticket.
++ `/make-figure`: build one figure in this session from its ticket.
++ `/make-table`: build one table in this session from its ticket.
 + `/prototype`: try a figure or table layout before committing to it.
 
 ## 5. Revise
 - `/humanizer`: rewrite prose that reads as AI-generated. Same claims, your voice.
-- `/code-review`: check each section against its ticket and the paper's style rules.
+- `/review-section`: two fresh reviewers check a section against its ticket and the whole paper. The paper's `/code-review`.
 + `/wait-what`: a paragraph didn't land. Have it re-pitched from another angle.
 
 ## Any time

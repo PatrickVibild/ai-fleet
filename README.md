@@ -12,6 +12,9 @@ Runs `/implement` on many tickets at once and shows every Claude agent in an Oma
   - `Stop` runs the tests; red sends the implementor back to fix (up to `fix_rounds`), green queues the merge.
 - **`fleet` CLI**: the orchestrator skill, the panel and you all use it. `fleet --help` lists the commands.
 - **skill** `/implement-orchestrator` (in `skill/`) turns tickets into a plan and follows the run's events.
+- **skills** for the How-to playbooks, also in `skill/` and global once installed: `/research-academic`, `/humanizer`,
+  and the paper skills `/write-section`, `/make-figure`, `/make-table`, `/review-section` and `/find-papers`. The paper
+  skills need a repo laid out for them (`paper/CONTEXT.md`, `make check`, `scripts/zotero.py`) and stop without one.
 - **panel** (in `omarchy-plugin/`) is the Fleet dropdown in the Omarchy bar.
 
 ## Usage limit
@@ -118,7 +121,7 @@ key, a protected branch, the remote is ahead (pull first), or the network.
 
 ## Install
 
-    ./install.sh            # links everything into place and starts the daemon
+    ./install.sh            # links everything into place, every skill in skill/ included, and starts the daemon
     ./install.sh --remove   # undoes it; runs and settings are kept
     ./install-skills.sh     # installs Matt Pocock's skills plugin (provides /implement)
 

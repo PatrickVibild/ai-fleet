@@ -8,9 +8,13 @@ repo="$(cd "$(dirname "$0")" && pwd)"
 links=(
   "$repo/bin/fleet|$HOME/.local/bin/fleet"
   "$repo/systemd/ai-fleet.service|$HOME/.config/systemd/user/ai-fleet.service"
-  "$repo/skill/implement-orchestrator|$HOME/.claude/skills/implement-orchestrator"
   "$repo/omarchy-plugin|$HOME/.config/omarchy/plugins/patrick.ai-fleet"
 )
+# Every skill in skill/ is linked into ~/.claude/skills, so it's global: the orchestrator and the skills the How-to tab's playbooks use.
+for s in "$repo"/skill/*/SKILL.md; do
+  s="$(dirname "$s")"
+  links+=("$s|$HOME/.claude/skills/$(basename "$s")")
+done
 
 # The rules that tell every Claude session to register its training and to put reminders in the Todo tab.
 # Each is kept between markers so it can be updated or removed.
