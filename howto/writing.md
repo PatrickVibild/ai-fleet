@@ -5,7 +5,7 @@ From a question to a revised paper.
 <!-- Numbered sections are the stages of the main flow, left to right. In each, `-` skills are the main path, in order, and `+` skills are optional or alternatives. Unnumbered sections are for any time. -->
 
 ## 1. Learn the field
-- `/research`: answer a question from primary sources (papers, docs, specs), with citations, in a Markdown file.
+- `/research-academic`: find and read the prior work in your literature library (mirrored to Zotero), and cite it for each claim.
 + `/teach`: you need to understand a method yourself before writing about it.
 
 ## 2. Sharpen the claim
